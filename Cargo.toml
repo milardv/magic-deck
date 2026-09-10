@@ -1,0 +1,25 @@
+[package]
+name = "magic-deck"
+version = "0.1.0"
+edition = "2021"
+description = "Local MTG Arena deck and collection browser"
+license = "MIT"
+
+[dependencies]
+anyhow = "1.0"
+axum = { version = "0.8", features = ["json", "query"] }
+dirs = "6.0"
+regex = "1.11"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+thiserror = "2.0"
+tokio = { version = "1.45", features = ["macros", "rt-multi-thread", "signal", "sync", "fs", "net"] }
+tower-http = { version = "0.6", features = ["compression-gzip", "trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+tempfile = "3.20"
