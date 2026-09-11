@@ -14,12 +14,12 @@ use tokio::sync::RwLock;
 use crate::{
     ai_coach::{CoachError, GeminiClient},
     analysis_store::{self, AnalysisStore},
-    config,
+    collection_cache, config,
     export::{collection_arena, collection_csv, deck_arena, deck_csv},
     memory_collection::{self, ScanResult},
     model::{
-        AnalysisReport, AnalysisReportSummary, AnalyzeDeckRequest, OwnedCard, Settings, Snapshot,
-        StatusResponse, UpdateSettings,
+        AnalysisReport, AnalysisReportSummary, AnalyzeDeckRequest, OwnedCard, Settings,
+        SettingsView, Snapshot, StatusResponse, UpdateSettings,
     },
     parser,
 };
@@ -59,6 +59,45 @@ pub async fn index() -> Html<&'static str> {
     Html(include_str!("../web/index.html"))
 }
 
+pub async fn web_asset(Path(name): Path<String>) -> Response {
+    let (mime, body) = match name.as_str() {
+        "app.css" => ("text/css; charset=utf-8", include_str!("../web/app.css")),
+        "app.js" => (
+            "text/javascript; charset=utf-8",
+            include_str!("../web/app.js"),
+        ),
+        "collection.js" => (
+            "text/javascript; charset=utf-8",
+            include_str!("../web/collection.js"),
+        ),
+        "coach.js" => (
+            "text/javascript; charset=utf-8",
+            include_str!("../web/coach.js"),
+        ),
+        "preview.js" => (
+            "text/javascript; charset=utf-8",
+            include_str!("../web/preview.js"),
+        ),
+        _ => return StatusCode::NOT_FOUND.into_response(),
+    };
+    (
+        [
+            (header::CONTENT_TYPE, mime),
+            (header::CACHE_CONTROL, "no-cache"),
+        ],
+        body,
+    )
+        .into_response()
+}
+
+pub async fn icon() -> impl IntoResponse {
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "image/png")],
+        include_bytes!("../web/assets/magic-deck-icon.png").as_slice(),
+    )
+}
+
 pub async fn health() -> Json<serde_json::Value> {
     Json(json!({"status": "ok"}))
 }
@@ -72,25 +111,45 @@ pub async fn sync(State(state): State<AppState>) -> Result<Json<StatusResponse>,
     Ok(Json(build_status(&state).await))
 }
 
-pub async fn get_settings(State(state): State<AppState>) -> Json<Settings> {
-    Json(state.settings.read().await.clone())
+pub async fn get_settings(State(state): State<AppState>) -> Json<SettingsView> {
+    let settings = state.settings.read().await;
+    Json(SettingsView {
+        log_path: settings.log_path.clone(),
+        gemini_configured: effective_api_key(&settings).is_some(),
+    })
 }
 
 pub async fn update_settings(
     State(state): State<AppState>,
     Json(update): Json<UpdateSettings>,
-) -> Result<Json<Settings>, ApiError> {
+) -> Result<Json<SettingsView>, ApiError> {
     let value = update.log_path.trim();
     if value.is_empty() {
         return Err(ApiError::bad_request("The log path cannot be empty."));
     }
     let expanded = expand_home(value);
+    let previous_key = state.settings.read().await.gemini_api_key.clone();
     let settings = Settings {
         log_path: expanded.to_string_lossy().into_owned(),
+        gemini_api_key: update
+            .gemini_api_key
+            .map(|key| (!key.trim().is_empty()).then(|| key.trim().to_owned()))
+            .unwrap_or(previous_key),
     };
     config::save(&settings).map_err(ApiError::internal)?;
     *state.settings.write().await = settings.clone();
-    Ok(Json(settings))
+    let gemini_configured = effective_api_key(&settings).is_some();
+    Ok(Json(SettingsView {
+        log_path: settings.log_path,
+        gemini_configured,
+    }))
+}
+
+fn effective_api_key(settings: &Settings) -> Option<String> {
+    std::env::var("GEMINI_API_KEY")
+        .ok()
+        .filter(|key| !key.trim().is_empty())
+        .or_else(|| settings.gemini_api_key.clone())
 }
 
 pub async fn decks(State(state): State<AppState>) -> Json<Vec<crate::model::Deck>> {
@@ -200,7 +259,14 @@ pub async fn analyze_deck(
             "The collection is empty. Start MTGA and synchronize before requesting an analysis.",
         ));
     }
-    let client = GeminiClient::from_env().map_err(coach_error)?;
+    let (api_key, log_path) = {
+        let settings = state.settings.read().await;
+        (
+            effective_api_key(&settings),
+            PathBuf::from(&settings.log_path),
+        )
+    };
+    let client = GeminiClient::from_api_key(api_key).map_err(coach_error)?;
     let fingerprint = analysis_store::fingerprint(&deck, &collection, client.model())
         .map_err(ApiError::internal)?;
     let store = state.analysis_store.clone();
@@ -218,7 +284,7 @@ pub async fn analyze_deck(
         return Ok(Json(report));
     }
     let analysis = client
-        .analyze(&deck, &collection)
+        .analyze(&deck, &collection, log_path)
         .await
         .map_err(coach_error)?;
     let store = state.analysis_store.clone();
@@ -284,7 +350,23 @@ pub async fn sync_state(state: &AppState) -> Result<(), ApiError> {
     let log_path = state.settings.read().await.log_path.clone();
     let path = PathBuf::from(log_path);
     let snapshot = tokio::task::spawn_blocking(move || {
-        let mut snapshot = parser::parse_log(&path)?;
+        let cached = collection_cache::load().ok().flatten();
+        let mut snapshot = match parser::parse_log(&path) {
+            Ok(snapshot) => snapshot,
+            Err(error) if cached.is_some() => {
+                let cached = cached.expect("checked above");
+                return Ok::<_, parser::ParseError>(Snapshot {
+                    collection: cached.collection,
+                    synced_at: cached.synced_at,
+                    source_modified_at: cached.source_modified_at,
+                    warnings: vec![format!(
+                        "MTGA log unavailable; using the last saved collection snapshot ({error})."
+                    )],
+                    ..Snapshot::default()
+                });
+            }
+            Err(error) => return Err(error),
+        };
         if snapshot.collection.is_empty() {
             match memory_collection::scan(&path) {
                 Ok(ScanResult::Collection(cards)) => {
@@ -306,6 +388,23 @@ pub async fn sync_state(state: &AppState) -> Result<(), ApiError> {
                     .warnings
                     .push(format!("Could not read the live MTGA collection: {error}")),
             }
+        }
+        if !snapshot.collection.is_empty() {
+            if let Err(error) = collection_cache::save(
+                &snapshot.collection,
+                snapshot.synced_at.clone(),
+                snapshot.source_modified_at.clone(),
+            ) {
+                snapshot
+                    .warnings
+                    .push(format!("Could not save the collection cache: {error}"));
+            }
+        } else if let Some(cached) = cached {
+            snapshot.collection = cached.collection;
+            snapshot.warnings.push(
+                "MTGA collection is not currently available; showing the last saved snapshot."
+                    .into(),
+            );
         }
         Ok::<_, parser::ParseError>(snapshot)
     })

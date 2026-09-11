@@ -1,39 +1,42 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="fr" class="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
+  <link rel="icon" type="image/png" href="/assets/magic-deck-icon.png">
   <title>Magic Deck</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/motion@13.2.0/dist/motion.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=DM+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
   <script>
-    tailwind.config = { darkMode: 'class', theme: { extend: { colors: { ink: '#080b12', panel: '#111827', gold: '#d9ae61' } } } };
+    window.tailwind = window.tailwind || {};
+    tailwind.config = { darkMode: 'class', theme: { extend: { colors: { ink: '#0b0d10', panel: '#15191e', gold: '#d9ae61', rust: '#b9543d', chalk: '#f2eee5' } } } };
   </script>
-  <style>
-    * { scrollbar-color: #374151 #111827; }
-    body { background-image: radial-gradient(circle at 75% 0%, rgba(217,174,97,.10), transparent 28rem); }
-    .nav-active { color: #f8e5ba; background: rgba(217,174,97,.12); border-color: rgba(217,174,97,.28); }
-  </style>
+  <link rel="stylesheet" href="/assets/app.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/mana-font@1.18.0/css/mana.min.css">
 </head>
-<body class="min-h-screen bg-ink text-slate-200 antialiased">
-  <div class="min-h-screen lg:flex">
-    <aside class="border-b border-white/10 bg-slate-950/80 p-4 backdrop-blur lg:fixed lg:inset-y-0 lg:w-64 lg:border-b-0 lg:border-r lg:p-6">
+<body class="min-h-screen text-slate-200 antialiased">
+  <div class="app-shell min-h-screen lg:flex">
+    <aside class="side-plate border-b p-4 lg:fixed lg:inset-y-0 lg:w-64 lg:border-b-0 lg:border-r lg:p-6">
       <div class="flex items-center justify-between lg:block">
-        <button onclick="showView('home')" class="text-left">
-          <span class="block text-xs font-semibold uppercase tracking-[.28em] text-gold">Local companion</span>
-          <span class="mt-1 block text-2xl font-bold text-white">Magic Deck</span>
+        <button onclick="showView('home')" class="brand-mark text-left">
+          <img src="/assets/magic-deck-icon.png" alt="" class="h-10 w-10 object-contain">
+          <span><span class="block text-[10px] uppercase tracking-[.24em] text-slate-500">Votre atelier Magic</span><span class="mt-1 block text-2xl font-bold">Magic Deck</span></span>
         </button>
-        <button id="sync-mobile" onclick="syncData()" class="rounded-lg bg-gold px-3 py-2 text-sm font-bold text-slate-950 lg:hidden">Sync</button>
+        <button id="sync-mobile" onclick="syncData()" class="action-primary px-3 py-2 text-sm font-bold lg:hidden">Sync</button>
       </div>
-      <nav class="mt-5 grid grid-cols-4 gap-2 lg:mt-10 lg:block lg:space-y-2" aria-label="Main navigation">
-        <button data-nav="home" onclick="showView('home')" class="nav-active w-full rounded-xl border border-transparent px-3 py-2 text-left text-sm font-medium">Home</button>
-        <button data-nav="decks" onclick="showView('decks')" class="w-full rounded-xl border border-transparent px-3 py-2 text-left text-sm font-medium text-slate-400 hover:text-white">My Decks</button>
-        <button data-nav="collection" onclick="showView('collection')" class="w-full rounded-xl border border-transparent px-3 py-2 text-left text-sm font-medium text-slate-400 hover:text-white">Collection</button>
-        <button data-nav="settings" onclick="showView('settings')" class="w-full rounded-xl border border-transparent px-3 py-2 text-left text-sm font-medium text-slate-400 hover:text-white">Settings</button>
+      <nav class="mt-5 grid grid-cols-4 gap-2 lg:mt-14 lg:block lg:space-y-2" data-shell-nav aria-label="Navigation principale">
+        <button data-nav="home" onclick="showView('home')" class="nav-active w-full rounded-sm border border-transparent px-3 py-2 text-left text-sm font-medium">Accueil</button>
+        <button data-nav="decks" onclick="showView('decks')" class="w-full rounded-sm border border-transparent px-3 py-2 text-left text-sm font-medium text-slate-400 hover:text-white">Mes decks</button>
+        <button data-nav="collection" onclick="showView('collection')" class="w-full rounded-sm border border-transparent px-3 py-2 text-left text-sm font-medium text-slate-400 hover:text-white">Collection</button>
+        <button data-nav="settings" onclick="showView('settings')" class="w-full rounded-sm border border-transparent px-3 py-2 text-left text-sm font-medium text-slate-400 hover:text-white">Réglages</button>
       </nav>
       <div class="mt-8 hidden lg:block">
-        <button id="sync-desktop" onclick="syncData()" class="w-full rounded-xl bg-gold px-4 py-3 text-sm font-bold text-slate-950 transition hover:bg-amber-300 disabled:opacity-50">Refresh / Sync</button>
-        <p id="sidebar-status" class="mt-3 truncate text-xs text-slate-500">Not synced</p>
+        <button id="sync-desktop" onclick="syncData()" class="action-primary w-full px-4 py-3 text-sm font-bold transition disabled:opacity-50">Synchroniser</button>
+        <p id="sidebar-status" class="mono mt-3 truncate text-[11px] text-slate-500">En attente de synchronisation</p>
       </div>
     </aside>
 
@@ -48,217 +51,17 @@
       </div>
     </main>
   </div>
+  <dialog id="card-dialog" aria-label="Aperçu de la carte">
+    <button class="viewer-close" onclick="hideCardFocus()" aria-label="Fermer l’aperçu">Fermer <kbd>Esc</kbd></button>
+    <img id="viewer-image" alt="">
+    <p id="viewer-message" role="status"></p>
+    <p id="viewer-name"></p>
+  </dialog>
 
-  <script>
-    const state = { status: null, decks: [], collection: [], currentView: 'home', currentDeckId: null, onlyUserDecks: false };
-    const escapeHtml = value => String(value ?? '').replace(/[&<>'"]/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]));
-    const api = async (url, options = {}) => {
-      const response = await fetch(url, options);
-      if (!response.ok) {
-        const payload = await response.json().catch(() => ({}));
-        throw new Error(payload.error || `Request failed (${response.status})`);
-      }
-      return response.json();
-    };
-    const metric = (label, value, hint = '') => `<article class="rounded-2xl border border-white/10 bg-panel/80 p-5"><p class="text-xs font-semibold uppercase tracking-wider text-slate-500">${escapeHtml(label)}</p><p class="mt-2 text-3xl font-bold text-white">${escapeHtml(value)}</p><p class="mt-1 text-xs text-slate-500">${escapeHtml(hint)}</p></article>`;
-    const heading = (eyebrow, title, copy = '') => `<header class="mb-7"><p class="text-xs font-semibold uppercase tracking-[.2em] text-gold">${escapeHtml(eyebrow)}</p><h1 class="mt-2 text-3xl font-bold text-white sm:text-4xl">${escapeHtml(title)}</h1>${copy ? `<p class="mt-2 max-w-2xl text-sm text-slate-400">${escapeHtml(copy)}</p>` : ''}</header>`;
-    const formatTime = value => value ? new Date(Number(value) * 1000).toLocaleString() : 'Never';
+  <script src="/assets/app.js" defer></script>
+  <script src="/assets/collection.js" defer></script>
+  <script src="/assets/coach.js" defer></script>
+  <script src="/assets/preview.js" defer></script>
 
-    function showAlert(message, error = false) {
-      const alert = document.getElementById('alert');
-      alert.textContent = message;
-      alert.className = `mb-6 rounded-xl border px-4 py-3 text-sm ${error ? 'border-red-500/30 bg-red-500/10 text-red-200' : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200'}`;
-      clearTimeout(showAlert.timer);
-      showAlert.timer = setTimeout(() => alert.classList.add('hidden'), 5000);
-    }
-
-    function showView(view) {
-      state.currentView = view;
-      document.querySelectorAll('[data-view]').forEach(element => element.classList.add('hidden'));
-      document.getElementById(`view-${view}`).classList.remove('hidden');
-      document.querySelectorAll('[data-nav]').forEach(button => button.classList.toggle('nav-active', button.dataset.nav === view));
-      if (view === 'collection') renderCollection();
-    }
-
-    function renderHome() {
-      const status = state.status;
-      document.getElementById('view-home').innerHTML = heading('Dashboard', 'Your Arena library', 'Parsed locally from MTGA. No account or cloud upload required.') + `
-        <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          ${metric('Decks', status.deckCount, 'personal decks found')}
-          ${metric('Unique cards', status.cardsOwned, `${status.totalCopies} total copies`)}
-          ${metric('Rare wildcards', status.wildcards.rare, `${status.wildcards.mythic} mythic`) }
-          ${metric('Last sync', formatTime(status.syncedAt), status.logExists ? 'log file connected' : 'log file not found')}
-        </div>
-        ${status.warnings.length ? `<div class="mt-6 rounded-2xl border border-amber-400/20 bg-amber-400/5 p-5"><h2 class="font-semibold text-amber-200">Parser notes</h2><ul class="mt-2 space-y-1 text-sm text-amber-100/70">${status.warnings.map(item => `<li>• ${escapeHtml(item)}</li>`).join('')}</ul></div>` : ''}
-        <div class="mt-8 flex items-center justify-between"><h2 class="text-xl font-bold text-white">Recent decks</h2><button onclick="showView('decks')" class="text-sm font-semibold text-gold">View all →</button></div>
-        <div class="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">${state.decks.slice(0, 6).map(deckCard).join('') || empty('No decks parsed yet.')}</div>`;
-    }
-
-    function colorPips(colors) {
-      const styles = {W:'bg-amber-50 text-slate-900', U:'bg-blue-500 text-white', B:'bg-slate-900 text-white', R:'bg-red-500 text-white', G:'bg-emerald-600 text-white'};
-      return colors.length ? colors.map(color => `<span class="inline-flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${styles[color] || 'bg-slate-700'}">${escapeHtml(color)}</span>`).join('') : '<span class="text-xs text-slate-500">Color data unavailable</span>';
-    }
-
-    function deckCard(deck) {
-      return `<button data-deck-id="${escapeHtml(deck.id)}" onclick="openDeck(this.dataset.deckId)" class="rounded-2xl border border-white/10 bg-panel/80 p-5 text-left transition hover:-translate-y-0.5 hover:border-gold/40">
-        <div class="flex items-start justify-between gap-3"><div><h3 class="font-bold text-white">${escapeHtml(deck.name)}</h3><p class="mt-1 text-xs text-slate-500">${escapeHtml(deck.format || 'Unknown format')} · ${deck.cardCount} cards</p></div><span class="text-gold">→</span></div>
-        ${deck.isUserDeck ? '<span class="mt-3 inline-flex rounded-full bg-emerald-400/10 px-2 py-1 text-[11px] font-semibold text-emerald-300">Built by me</span>' : ''}
-        <div class="mt-5 flex gap-1.5">${colorPips(deck.colors)}</div>
-      </button>`;
-    }
-
-    function renderDecks() {
-      const decks = state.onlyUserDecks ? state.decks.filter(deck => deck.isUserDeck) : state.decks;
-      document.getElementById('view-decks').innerHTML = heading('Library', 'My Decks', `${decks.length} of ${state.decks.length} deck${state.decks.length === 1 ? '' : 's'} read from Player.log.`) + `
-        <div class="mb-5 flex items-center justify-between rounded-xl border border-white/10 bg-panel/60 px-4 py-3"><label class="flex cursor-pointer items-center gap-3 text-sm font-medium text-white"><input type="checkbox" ${state.onlyUserDecks ? 'checked' : ''} onchange="state.onlyUserDecks = this.checked; renderDecks()" class="h-4 w-4 rounded border-white/20 bg-slate-900 text-gold focus:ring-gold/50">Only decks built by me</label><span class="text-xs text-slate-500">${state.decks.filter(deck => deck.isUserDeck).length} custom</span></div>
-        <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">${decks.map(deckCard).join('') || empty(state.onlyUserDecks ? 'No decks built by you were detected.' : 'Open the Decks screen in MTGA, then sync.')}</div>`;
-    }
-
-    function groupCards(cards) {
-      const groups = { Creatures: [], Spells: [], Lands: [] };
-      for (const card of cards) {
-        const type = card.typeLine.toLowerCase();
-        if (type.includes('creature')) groups.Creatures.push(card);
-        else if (type.includes('land')) groups.Lands.push(card);
-        else groups.Spells.push(card);
-      }
-      return groups;
-    }
-
-    function cardRows(cards) {
-      return cards.map(card => `<div class="flex items-center justify-between border-b border-white/5 py-2 last:border-0"><span><b class="mr-3 text-gold">${card.quantity}×</b>${escapeHtml(card.name)}</span><span class="text-xs text-slate-600">#${card.arenaId}</span></div>`).join('');
-    }
-
-    function cardGroups(cards) {
-      const groups = groupCards(cards);
-      return Object.entries(groups).filter(([, items]) => items.length).map(([name, items]) => `<article class="rounded-2xl border border-white/10 bg-panel/80 p-5"><h2 class="mb-3 font-bold text-white">${name} <span class="ml-1 text-xs font-normal text-slate-500">${items.reduce((sum, card) => sum + card.quantity, 0)}</span></h2>${cardRows(items)}</article>`).join('');
-    }
-
-    function openDeck(id) {
-      const deck = state.decks.find(item => item.id === id);
-      if (!deck) return;
-      state.currentDeckId = id;
-      const encodedId = encodeURIComponent(deck.id);
-      document.getElementById('view-deck-detail').innerHTML = `
-        <button onclick="showView('decks')" class="mb-5 text-sm font-semibold text-slate-400 hover:text-white">← Back to decks</button>
-        <div class="mb-7 flex flex-col justify-between gap-4 sm:flex-row sm:items-end"><div>${heading(deck.format || 'Deck', deck.name, `${deck.cardCount} cards in the main deck.`)}</div>
-          <div class="flex flex-wrap gap-2"><button id="analyze-deck-button" data-deck-id="${escapeHtml(deck.id)}" onclick="analyzeDeck(this.dataset.deckId)" class="rounded-lg bg-gradient-to-r from-violet-400 to-fuchsia-400 px-4 py-2 text-sm font-bold text-slate-950 transition hover:brightness-110 disabled:cursor-wait disabled:opacity-60">Analyze Deck with AI Coach</button><button data-deck-id="${escapeHtml(deck.id)}" onclick="copyArena(this.dataset.deckId)" class="rounded-lg bg-gold px-4 py-2 text-sm font-bold text-slate-950">Copy for Arena</button>${['json','csv'].map(format => `<a href="/api/decks/${encodedId}/export?format=${format}" class="rounded-lg border border-white/10 px-4 py-2 text-sm font-semibold uppercase hover:border-gold/40">${format}</a>`).join('')}</div></div>
-        <section class="mb-8 grid gap-4 xl:grid-cols-[minmax(0,1fr)_18rem]">
-          <div id="analysis-report" class="min-h-28 rounded-2xl border border-violet-400/20 bg-violet-400/5 p-6"><p class="text-sm text-slate-400">Ask the AI coach for a strategic review based only on cards you own.</p></div>
-          <aside class="rounded-2xl border border-white/10 bg-panel/80 p-5"><h2 class="font-bold text-white">Analysis history</h2><div id="analysis-history" class="mt-3 text-sm text-slate-500">Loading…</div></aside>
-        </section>
-        <div class="grid gap-4 lg:grid-cols-2">${cardGroups(deck.mainDeck)}${deck.commandZone.length ? `<article class="rounded-2xl border border-gold/20 bg-panel/80 p-5"><h2 class="mb-3 font-bold text-white">Commander</h2>${cardRows(deck.commandZone)}</article>` : ''}${deck.sideboard.length ? `<article class="rounded-2xl border border-white/10 bg-panel/80 p-5"><h2 class="mb-3 font-bold text-white">Sideboard</h2>${cardRows(deck.sideboard)}</article>` : ''}</div>`;
-      showView('deck-detail');
-      loadAnalysisHistory(deck.id);
-    }
-
-    async function analyzeDeck(deckId) {
-      const button = document.getElementById('analyze-deck-button');
-      if (button) { button.disabled = true; button.textContent = 'Analysis in progress…'; }
-      document.getElementById('analysis-report').innerHTML = `<div class="flex items-center gap-3 text-violet-200"><span class="h-5 w-5 animate-spin rounded-full border-2 border-violet-300 border-t-transparent"></span><span>Gemini is reviewing the deck and your collection…</span></div>`;
-      try {
-        const report = await api('/api/analyze-deck', {
-          method: 'POST',
-          headers: {'content-type':'application/json'},
-          body: JSON.stringify({deckId})
-        });
-        if (state.currentDeckId !== deckId) return;
-        renderAnalysis(report);
-        await loadAnalysisHistory(deckId);
-        showAlert('Deck analysis saved.');
-      } catch (error) {
-        document.getElementById('analysis-report').innerHTML = `<p class="font-semibold text-red-200">Analysis unavailable</p><p class="mt-2 text-sm text-red-200/70">${escapeHtml(error.message)}</p>`;
-      } finally {
-        if (button && state.currentDeckId === deckId) { button.disabled = false; button.textContent = 'Analyze Deck with AI Coach'; }
-      }
-    }
-
-    async function loadAnalysisHistory(deckId) {
-      const history = document.getElementById('analysis-history');
-      try {
-        const reports = await api(`/api/decks/${encodeURIComponent(deckId)}/analyses`);
-        if (state.currentDeckId !== deckId || !history) return;
-        history.innerHTML = reports.length ? reports.map(report => `<button data-report-id="${report.id}" onclick="loadAnalysis(this.dataset.reportId)" class="mb-2 w-full rounded-xl border border-white/10 px-3 py-3 text-left transition hover:border-violet-400/40"><span class="block font-semibold text-slate-200">${escapeHtml(new Date(report.createdAt * 1000).toLocaleString())}</span><span class="mt-1 block text-xs text-slate-500">${escapeHtml(report.model)} · ${report.collectionCardCount} cards</span></button>`).join('') : 'No saved analysis yet.';
-      } catch (error) {
-        if (history) history.textContent = error.message;
-      }
-    }
-
-    async function loadAnalysis(reportId) {
-      const panel = document.getElementById('analysis-report');
-      panel.innerHTML = '<p class="text-sm text-slate-400">Loading saved analysis…</p>';
-      try { renderAnalysis(await api(`/api/analyses/${encodeURIComponent(reportId)}`)); }
-      catch (error) { panel.innerHTML = `<p class="text-red-200">${escapeHtml(error.message)}</p>`; }
-    }
-
-    function renderAnalysis(report) {
-      const analysis = report.analysis;
-      const badge = priority => ({high:'border-red-400/30 bg-red-400/10 text-red-200', medium:'border-amber-400/30 bg-amber-400/10 text-amber-200', low:'border-sky-400/30 bg-sky-400/10 text-sky-200'}[priority] || 'border-white/10 bg-white/5 text-slate-300');
-      const changes = (items, add) => items.length ? `<div><p class="mb-2 text-xs font-semibold uppercase tracking-wider ${add ? 'text-emerald-300' : 'text-red-300'}">${add ? 'Add' : 'Remove'}</p>${items.map(card => `<div class="mb-1 rounded-lg ${add ? 'bg-emerald-400/10 text-emerald-100' : 'bg-red-400/10 text-red-100'} px-3 py-2 text-sm"><b>${card.quantity}×</b> ${escapeHtml(card.card_name)}</div>`).join('')}</div>` : '';
-      document.getElementById('analysis-report').innerHTML = `
-        <div class="flex flex-col justify-between gap-2 border-b border-white/10 pb-5 sm:flex-row sm:items-start"><div><p class="text-xs font-semibold uppercase tracking-[.2em] text-violet-300">AI Coach report${report.cached ? ' · cached' : ''}</p><h2 class="mt-2 text-xl font-bold text-white">${escapeHtml(report.deckName)}</h2></div><p class="text-xs text-slate-500">${escapeHtml(new Date(report.createdAt * 1000).toLocaleString())}<br>${escapeHtml(report.model)}</p></div>
-        <div class="mt-5 grid gap-4 lg:grid-cols-2"><div><h3 class="font-semibold text-white">Deck summary</h3><p class="mt-2 text-sm leading-6 text-slate-300">${escapeHtml(analysis.deck_summary)}</p></div><div><h3 class="font-semibold text-white">Game plan</h3><p class="mt-2 text-sm leading-6 text-slate-300">${escapeHtml(analysis.game_plan)}</p></div></div>
-        <div class="mt-5 grid gap-4 md:grid-cols-2"><div class="rounded-xl bg-emerald-400/5 p-4"><h3 class="font-semibold text-emerald-200">Strengths</h3><ul class="mt-2 space-y-2 text-sm text-slate-300">${analysis.strengths.map(item => `<li>• ${escapeHtml(item)}</li>`).join('')}</ul></div><div class="rounded-xl bg-amber-400/5 p-4"><h3 class="font-semibold text-amber-200">Weaknesses</h3><ul class="mt-2 space-y-2 text-sm text-slate-300">${analysis.weaknesses.map(item => `<li>• ${escapeHtml(item)}</li>`).join('')}</ul></div></div>
-        <div class="mt-6"><h3 class="font-semibold text-white">Recommended changes</h3><div class="mt-3 space-y-3">${analysis.improvement_suggestions.map(item => `<article class="rounded-xl border border-white/10 bg-slate-950/40 p-4"><div class="flex flex-wrap items-center justify-between gap-2"><h4 class="font-semibold text-white">${escapeHtml(item.title)}</h4><span class="rounded-full border px-2.5 py-1 text-xs font-bold uppercase ${badge(item.priority)}">${escapeHtml(item.priority)}</span></div><div class="mt-4 grid gap-3 sm:grid-cols-2">${changes(item.card_to_remove, false)}${changes(item.card_to_add, true)}</div><p class="mt-4 text-sm leading-6 text-slate-400">${escapeHtml(item.reasoning)}</p></article>`).join('') || '<p class="text-sm text-slate-500">No card changes recommended.</p>'}</div></div>`;
-    }
-
-    async function copyArena(id) {
-      try {
-        const response = await fetch(`/api/decks/${encodeURIComponent(id)}/export?format=arena`);
-        if (!response.ok) throw new Error('Export failed.');
-        await navigator.clipboard.writeText(await response.text());
-        showAlert('Arena deck copied to the clipboard.');
-      } catch (error) { showAlert(error.message, true); }
-    }
-
-    function renderCollection() {
-      const search = document.getElementById('collection-search')?.value.toLowerCase() || '';
-      const color = document.getElementById('collection-color')?.value || '';
-      const cards = state.collection.filter(card => (!search || card.name.toLowerCase().includes(search) || String(card.arenaId).includes(search)) && (!color || card.colors.includes(color)));
-      document.getElementById('view-collection').innerHTML = heading('Inventory', 'Collection', `${cards.length} of ${state.collection.length} unique cards.`) + `
-        <div class="mb-5 flex flex-col gap-3 sm:flex-row"><input id="collection-search" value="${escapeHtml(search)}" oninput="renderCollection()" placeholder="Search name or Arena ID" class="min-w-0 flex-1 rounded-xl border border-white/10 bg-panel px-4 py-3 outline-none focus:border-gold/50"><select id="collection-color" onchange="renderCollection()" class="rounded-xl border border-white/10 bg-panel px-4 py-3"><option value="">All colors</option>${['W','U','B','R','G'].map(item => `<option ${item === color ? 'selected' : ''}>${item}</option>`).join('')}</select><a href="/api/collection/export?format=csv" class="rounded-xl border border-white/10 px-4 py-3 text-center text-sm font-semibold hover:border-gold/40">Export CSV</a><a href="/api/collection/export?format=json" class="rounded-xl border border-white/10 px-4 py-3 text-center text-sm font-semibold hover:border-gold/40">Export JSON</a></div>
-        <div class="overflow-hidden rounded-2xl border border-white/10"><div class="max-h-[65vh] overflow-auto"><table class="w-full text-left text-sm"><thead class="sticky top-0 bg-slate-900 text-xs uppercase tracking-wider text-slate-500"><tr><th class="px-4 py-3">Qty</th><th class="px-4 py-3">Card</th><th class="hidden px-4 py-3 md:table-cell">Type</th><th class="hidden px-4 py-3 sm:table-cell">Colors</th><th class="px-4 py-3">Arena ID</th></tr></thead><tbody class="divide-y divide-white/5 bg-panel/70">${cards.map(card => `<tr><td class="px-4 py-3 font-bold text-gold">${card.quantity}×</td><td class="px-4 py-3 font-medium text-white">${escapeHtml(card.name)}</td><td class="hidden px-4 py-3 text-slate-400 md:table-cell">${escapeHtml(card.typeLine)}</td><td class="hidden px-4 py-3 sm:table-cell"><div class="flex gap-1">${colorPips(card.colors)}</div></td><td class="px-4 py-3 text-slate-500">${card.arenaId}</td></tr>`).join('') || `<tr><td colspan="5" class="p-8 text-center text-slate-500">No matching cards.</td></tr>`}</tbody></table></div></div>`;
-      setTimeout(() => { const input = document.getElementById('collection-search'); if (input && search) { input.focus(); input.setSelectionRange(search.length, search.length); } }, 0);
-    }
-
-    async function renderSettings() {
-      const settings = await api('/api/settings');
-      document.getElementById('view-settings').innerHTML = heading('Configuration', 'Settings', 'Point Magic Deck at the Player.log generated by your Steam/Proton installation.') + `
-        <form onsubmit="saveSettings(event)" class="max-w-3xl rounded-2xl border border-white/10 bg-panel/80 p-6"><label for="log-path" class="text-sm font-semibold text-white">MTGA Player.log path</label><input id="log-path" value="${escapeHtml(settings.logPath)}" class="mt-3 w-full rounded-xl border border-white/10 bg-slate-950 px-4 py-3 font-mono text-sm outline-none focus:border-gold/50"><p class="mt-3 text-xs text-slate-500">You may use an absolute path or <code>~/…</code>. The setting is stored in ~/.config/magic-deck/config.json.</p><div class="mt-6 flex gap-3"><button class="rounded-xl bg-gold px-5 py-3 text-sm font-bold text-slate-950">Save</button><button data-sync="true" class="rounded-xl border border-white/10 px-5 py-3 text-sm font-semibold">Save, then sync</button></div></form>`;
-    }
-
-    async function saveSettings(event) {
-      event.preventDefault();
-      try {
-        await api('/api/settings', { method: 'PUT', headers: {'content-type':'application/json'}, body: JSON.stringify({logPath: document.getElementById('log-path').value}) });
-        showAlert('Settings saved.');
-        await loadStatus();
-        if (event.submitter?.dataset.sync) await syncData();
-      } catch (error) { showAlert(error.message, true); }
-    }
-
-    function empty(message) { return `<div class="col-span-full rounded-2xl border border-dashed border-white/10 p-10 text-center text-slate-500">${escapeHtml(message)}</div>`; }
-
-    async function loadStatus() {
-      [state.status, state.decks, state.collection] = await Promise.all([api('/api/status'), api('/api/decks'), api('/api/collection')]);
-      document.getElementById('sidebar-status').textContent = `Last sync: ${formatTime(state.status.syncedAt)}`;
-      renderHome(); renderDecks(); renderCollection();
-    }
-
-    async function syncData() {
-      const buttons = [document.getElementById('sync-desktop'), document.getElementById('sync-mobile')];
-      buttons.forEach(button => { if (button) { button.disabled = true; button.textContent = 'Syncing…'; } });
-      try {
-        await api('/api/sync', {method:'POST'});
-        await loadStatus();
-        showAlert('MTGA data synchronized.');
-      } catch (error) { showAlert(error.message, true); }
-      finally { buttons.forEach(button => { if (button) { button.disabled = false; button.textContent = button.id === 'sync-mobile' ? 'Sync' : 'Refresh / Sync'; } }); }
-    }
-
-    const originalShowView = showView;
-    showView = function(view) { originalShowView(view); if (view === 'settings') renderSettings().catch(error => showAlert(error.message, true)); };
-    loadStatus().catch(error => showAlert(error.message, true));
-  </script>
 </body>
 </html>

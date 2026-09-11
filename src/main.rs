@@ -2,6 +2,8 @@ mod ai_coach;
 mod analysis_store;
 mod candidate_selector;
 mod card_database;
+mod coach_context;
+mod collection_cache;
 mod config;
 mod export;
 mod memory_collection;
@@ -38,6 +40,8 @@ async fn main() -> Result<()> {
 
     let app = Router::new()
         .route("/", get(routes::index))
+        .route("/assets/magic-deck-icon.png", get(routes::icon))
+        .route("/assets/{name}", get(routes::web_asset))
         .route("/health", get(routes::health))
         .route("/api/status", get(routes::status))
         .route("/api/sync", post(routes::sync))

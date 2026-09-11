@@ -242,7 +242,13 @@ pub fn fingerprint(
     collection: &[OwnedCard],
     model: &str,
 ) -> Result<String, serde_json::Error> {
-    let bytes = serde_json::to_vec(&(deck, collection, model))?;
+    let bytes = serde_json::to_vec(&(
+        deck,
+        collection,
+        model,
+        crate::ai_coach::COACH_VERSION,
+        crate::ai_coach::SYSTEM_INSTRUCTION,
+    ))?;
     let digest = Sha256::digest(bytes);
     Ok(digest.iter().map(|byte| format!("{byte:02x}")).collect())
 }
@@ -263,6 +269,8 @@ mod tests {
             ..Default::default()
         };
         let analysis = DeckAnalysisResponse {
+            combos: vec![],
+            play_challenge: String::new(),
             deck_summary: "Summary".into(),
             game_plan: "Plan".into(),
             strengths: vec!["Strong".into()],

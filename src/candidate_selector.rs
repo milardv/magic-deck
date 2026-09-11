@@ -28,12 +28,18 @@ pub fn select(deck: &Deck, collection: &[OwnedCard], limit: usize) -> Vec<OwnedC
     let mut ranked = collection
         .iter()
         .filter(|card| legal_for_format(card, format))
+        .filter(|card| {
+            card.colors
+                .iter()
+                .all(|color| deck_colors.contains(color.as_str()))
+        })
         .cloned()
         .map(|card| {
             let type_score = deck_types
                 .iter()
-                .find(|(kind, _)| card.type_line.starts_with(**kind))
+                .filter(|(kind, _)| !kind.is_empty() && card.type_line.starts_with(**kind))
                 .map(|(_, count)| 2 + (*count).min(4))
+                .max()
                 .unwrap_or(0);
             let color_score = if card.colors.is_empty() {
                 if card.type_line.to_ascii_lowercase().contains("land") {

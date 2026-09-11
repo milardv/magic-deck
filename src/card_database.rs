@@ -29,15 +29,21 @@ pub fn load_metadata(
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
     .with_context(|| format!("cannot open card database {}", database_path.display()))?;
+    let has_rarity = connection
+        .prepare("PRAGMA table_info(Cards)")?
+        .query_map([], |row| row.get::<_, String>(1))?
+        .filter_map(Result::ok)
+        .any(|name| name.eq_ignore_ascii_case("Rarity"));
     let mut metadata = HashMap::with_capacity(ids.len());
 
     for chunk in ids.iter().copied().collect::<Vec<_>>().chunks(500) {
         let placeholders = std::iter::repeat_n("?", chunk.len())
             .collect::<Vec<_>>()
             .join(",");
+        let rarity_column = if has_rarity { "c.Rarity" } else { "NULL" };
         let sql = format!(
             "SELECT c.GrpId, title.Loc, card_type.Loc, subtype.Loc, \
-             c.ExpansionCode, c.CollectorNumber, c.Colors \
+             c.ExpansionCode, c.CollectorNumber, c.Colors, {rarity_column} \
              FROM Cards c \
              LEFT JOIN Localizations_enUS title \
                ON title.LocId = c.TitleId AND title.Formatted = 1 \
@@ -65,6 +71,11 @@ pub fn load_metadata(
                         .unwrap_or_default(),
                     set_code: row.get(4)?,
                     collector_number: row.get(5)?,
+                    rarity: row
+                        .get::<_, Option<i32>>(7)
+                        .ok()
+                        .flatten()
+                        .and_then(rarity_name),
                 },
             ))
         })?;
@@ -74,6 +85,20 @@ pub fn load_metadata(
         }
     }
     Ok(Some(metadata))
+}
+
+fn rarity_name(value: i32) -> Option<String> {
+    Some(
+        match value {
+            1 => "Basic Land",
+            2 => "Common",
+            3 => "Uncommon",
+            4 => "Rare",
+            5 => "Mythic Rare",
+            _ => "Special",
+        }
+        .into(),
+    )
 }
 
 pub fn load_known_card_ids(log_path: &Path) -> Result<Option<HashSet<u32>>> {
@@ -143,7 +168,7 @@ pub fn load_deck_names(
     ))
 }
 
-fn find_database(log_path: &Path) -> Option<PathBuf> {
+pub(crate) fn find_database(log_path: &Path) -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("MTGA_CARD_DB_PATH").map(PathBuf::from) {
         if path.is_file() {
             return Some(path);
@@ -303,7 +328,7 @@ fn parse_colors(value: &str) -> Vec<String> {
         .collect()
 }
 
-fn strip_markup(value: &str) -> String {
+pub(crate) fn strip_markup(value: &str) -> String {
     static TAGS: OnceLock<Regex> = OnceLock::new();
     TAGS.get_or_init(|| Regex::new("<[^>]+>").expect("valid static regex"))
         .replace_all(value, "")

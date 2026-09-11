@@ -1,8 +1,29 @@
 use std::{
     collections::{BTreeMap, HashSet},
-    fs::{self, File},
-    os::unix::fs::FileExt,
+    fs,
     path::Path,
+};
+
+#[cfg(unix)]
+use std::{fs::File, os::unix::fs::FileExt};
+
+#[cfg(windows)]
+use std::mem::{size_of, zeroed};
+
+#[cfg(windows)]
+use windows_sys::Win32::{
+    Foundation::{CloseHandle, HANDLE},
+    System::{
+        Diagnostics::ToolHelp::{
+            CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+            TH32CS_SNAPPROCESS,
+        },
+        Memory::{
+            VirtualQueryEx, MEMORY_BASIC_INFORMATION, MEM_COMMIT, MEM_PRIVATE, PAGE_EXECUTE_READ,
+            PAGE_EXECUTE_READWRITE, PAGE_READONLY, PAGE_READWRITE,
+        },
+        Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ},
+    },
 };
 
 use anyhow::{bail, Context, Result};
@@ -41,6 +62,7 @@ impl Candidate {
     }
 }
 
+#[cfg(unix)]
 pub fn scan(log_path: &Path) -> Result<ScanResult> {
     let Some(pid) = find_mtga_pid()? else {
         return Ok(ScanResult::GameNotRunning);
@@ -99,6 +121,76 @@ pub fn scan(log_path: &Path) -> Result<ScanResult> {
     }
 }
 
+#[cfg(windows)]
+pub fn scan(log_path: &Path) -> Result<ScanResult> {
+    let Some(pid) = find_mtga_pid()? else {
+        return Ok(ScanResult::GameNotRunning);
+    };
+    let Some(valid_ids) = card_database::load_known_card_ids(log_path)? else {
+        bail!("MTGA card database not found");
+    };
+    let process = unsafe { OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, 0, pid) };
+    if process.is_null() {
+        bail!("cannot read MTGA process {pid}; grant permission to the current user");
+    }
+    let mut best = Candidate::default();
+    let mut address = 0usize;
+    loop {
+        let mut info: MEMORY_BASIC_INFORMATION = unsafe { zeroed() };
+        let queried = unsafe {
+            VirtualQueryEx(
+                process,
+                address as *const _,
+                &mut info,
+                size_of::<MEMORY_BASIC_INFORMATION>(),
+            )
+        };
+        if queried == 0 {
+            break;
+        }
+        let next = (info.BaseAddress as usize).saturating_add(info.RegionSize);
+        let readable = matches!(
+            info.Protect,
+            PAGE_READONLY | PAGE_READWRITE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE
+        );
+        if info.State == MEM_COMMIT
+            && info.Type == MEM_PRIVATE
+            && readable
+            && info.RegionSize > 0
+            && info.RegionSize as u64 <= MAX_REGION_SIZE
+        {
+            let mut bytes = vec![0; info.RegionSize];
+            let mut read = 0;
+            let ok = unsafe {
+                windows_sys::Win32::System::Diagnostics::Debug::ReadProcessMemory(
+                    process,
+                    info.BaseAddress,
+                    bytes.as_mut_ptr() as *mut _,
+                    bytes.len(),
+                    &mut read,
+                )
+            };
+            if ok != 0 {
+                scan_dictionary_layout(&bytes[..read], &valid_ids, &mut best);
+                if !best.is_collection() {
+                    scan_packed_layout(&bytes[..read], &valid_ids, &mut best);
+                }
+            }
+        }
+        if next <= address {
+            break;
+        }
+        address = next;
+    }
+    unsafe { CloseHandle(process) };
+    if best.is_collection() {
+        Ok(ScanResult::Collection(best.cards))
+    } else {
+        Ok(ScanResult::NoCollectionFound)
+    }
+}
+
+#[cfg(unix)]
 fn find_mtga_pid() -> Result<Option<u32>> {
     let mut candidates = Vec::new();
     for entry in fs::read_dir("/proc")? {
@@ -124,6 +216,42 @@ fn find_mtga_pid() -> Result<Option<u32>> {
         }
     }
     Ok(candidates.into_iter().max().map(|(_, pid)| pid))
+}
+
+#[cfg(windows)]
+fn find_mtga_pid() -> Result<Option<u32>> {
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+    if snapshot == -1isize as HANDLE {
+        bail!("cannot enumerate Windows processes");
+    }
+    let mut entry: PROCESSENTRY32W = unsafe { zeroed() };
+    entry.dwSize = size_of::<PROCESSENTRY32W>() as u32;
+    let mut found = None;
+    let mut first = true;
+    loop {
+        let ok = unsafe {
+            if first {
+                first = false;
+                Process32FirstW(snapshot, &mut entry)
+            } else {
+                Process32NextW(snapshot, &mut entry)
+            }
+        };
+        if ok == 0 {
+            break;
+        }
+        let length = entry
+            .szExeFile
+            .iter()
+            .position(|character| *character == 0)
+            .unwrap_or(entry.szExeFile.len());
+        if String::from_utf16_lossy(&entry.szExeFile[..length]).eq_ignore_ascii_case("MTGA.exe") {
+            found = Some(entry.th32ProcessID);
+            break;
+        }
+    }
+    unsafe { CloseHandle(snapshot) };
+    Ok(found)
 }
 
 fn readable_private_region(line: &str) -> Option<(u64, u64)> {

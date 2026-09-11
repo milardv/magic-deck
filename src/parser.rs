@@ -315,11 +315,36 @@ fn collect_decks(
 
 fn merge_deck(decks: &mut BTreeMap<String, Deck>, incoming: Deck) {
     match decks.get(&incoming.id) {
-        Some(existing) if existing.source_priority > incoming.source_priority => {}
+        Some(existing) if existing.source_priority > incoming.source_priority => {
+            let mut observed = existing.clone();
+            merge_observation(&mut observed, &incoming);
+            decks.insert(observed.id.clone(), observed);
+        }
         _ => {
             decks.insert(incoming.id.clone(), incoming);
         }
     }
+}
+
+fn merge_observation(target: &mut Deck, incoming: &Deck) {
+    // CurrentWins/CurrentLosses are cumulative counters repeated by several
+    // CourseDeck snapshots. Taking the maximum avoids counting the same games
+    // multiple times when the log contains Play, Ladder and refresh events.
+    target.wins = target.wins.max(incoming.wins);
+    target.losses = target.losses.max(incoming.losses);
+    target.draws = target.draws.max(incoming.draws);
+    for event in &incoming.events {
+        if !target.events.contains(event) {
+            target.events.push(event.clone());
+        }
+    }
+    if target.last_played.is_none() {
+        target.last_played.clone_from(&incoming.last_played);
+    }
+    if target.last_updated.is_none() {
+        target.last_updated.clone_from(&incoming.last_updated);
+    }
+    target.is_favorite |= incoming.is_favorite;
 }
 
 fn parse_deck(
@@ -366,6 +391,13 @@ fn parse_deck(
         command_zone,
         card_count,
         is_user_deck: false,
+        last_played: None,
+        last_updated: None,
+        is_favorite: false,
+        wins: 0,
+        losses: 0,
+        draws: 0,
+        events: Vec::new(),
         source_priority: 3,
     })
 }
@@ -392,6 +424,12 @@ fn parse_wrapped_deck(
     let mut deck = parse_deck(&combined, metadata)?;
     if object_value_ci(object, &["courseDeck"]).is_some() {
         deck.source_priority = 1;
+        deck.wins = u32_value_ci(object, &["currentWins"]).unwrap_or_default();
+        deck.losses = u32_value_ci(object, &["currentLosses"]).unwrap_or_default();
+        deck.draws = u32_value_ci(object, &["currentDraws"]).unwrap_or_default();
+        if let Some(event) = string_value_ci(object, &["internalEventName"]) {
+            deck.events.push(event);
+        }
     }
     Some(deck)
 }
@@ -431,6 +469,10 @@ fn collect_internal_decks(
         if let Some(mut deck) = parse_deck(&combined, metadata) {
             deck.source_priority = 3;
             deck.is_user_deck = summary_is_user_deck(summary);
+            deck.last_played = attribute_value(summary, "LastPlayed");
+            deck.last_updated = attribute_value(summary, "LastUpdated");
+            deck.is_favorite = attribute_value(summary, "IsFavorite")
+                .is_some_and(|value| value.eq_ignore_ascii_case("true"));
             merge_deck(decks, deck);
         }
     }
@@ -633,6 +675,7 @@ fn owned_card(id: u64, quantity: u32, metadata: Option<&CardMetadata>) -> OwnedC
         colors: metadata.colors,
         set_code: metadata.set_code,
         collector_number: metadata.collector_number,
+        rarity: metadata.rarity,
     }
 }
 
@@ -697,6 +740,10 @@ fn attribute_value(object: &Map<String, Value>, expected_name: &str) -> Option<S
 fn u64_value_ci(object: &Map<String, Value>, keys: &[&str]) -> Option<u64> {
     object_value_ci(object, keys)
         .and_then(|value| value.as_u64().or_else(|| value.as_str()?.parse().ok()))
+}
+
+fn u32_value_ci(object: &Map<String, Value>, keys: &[&str]) -> Option<u32> {
+    u64_value_ci(object, keys).and_then(|value| u32::try_from(value).ok())
 }
 
 fn value_to_string(value: &Value) -> Option<String> {

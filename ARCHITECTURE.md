@@ -10,7 +10,7 @@ Les décisions structurantes sont les suivantes :
 - aucune authentification auprès de MTGA ; l'envoi à Gemini est limité aux analyses explicitement demandées ;
 - aucune chaîne de compilation frontend ;
 - une synchronisation explicite depuis `Player.log` et le processus MTGA local ;
-- un cache en mémoire, reconstruit depuis le fichier source.
+- un snapshot en mémoire, un cache de collection sur disque et un historique SQLite des analyses.
 
 Ce périmètre réduit les prérequis, les risques sur les données utilisateur et le coût d'exploitation d'une application destinée à `127.0.0.1`.
 
@@ -34,12 +34,17 @@ Au démarrage, l'application charge la configuration et tente une première sync
 | `config.rs` | Valeur par défaut, chargement et sauvegarde atomique | Isoler les effets de bord liés au système de fichiers |
 | `parser.rs` | Lecture du journal et construction d'un `Snapshot` | Séparer le format instable de MTGA du transport HTTP |
 | `memory_collection.rs` | Extraction en lecture seule des quantités possédées depuis `MTGA.exe` | Compenser la suppression de la collection dans les journaux MTGA actuels |
+| `collection_cache.rs` | Persistance JSON atomique de la dernière collection valide | Garder l'inventaire disponible lorsque MTGA est fermé |
 | `ai_coach.rs` | Client Gemini, schéma de sortie et validation métier | Isoler l'API externe et refuser toute suggestion hors collection |
 | `analysis_store.rs` | Persistance SQLite des rapports et snapshots | Rendre chaque analyse datée et reproductible malgré les synchronisations futures |
 | `model.rs` | Types sérialisés de cartes, decks, statut et configuration | Partager un contrat unique entre parser, routes et exports |
 | `export.rs` | Production des formats Arena, JSON et CSV | Tester indépendamment les règles de représentation |
 | `routes.rs` | État partagé, handlers HTTP, filtrage et erreurs API | Centraliser la frontière web sans la mélanger au parsing |
-| `web/index.html` | Interface responsive et appels à l'API | Livrer l'UI dans le binaire sans serveur statique distinct |
+| `coach_context.rs` | Lecture bornée des capacités locales en anglais | Réduire les inventions sans envoyer toute la base MTGA |
+| `src/prompts/deck_coach.txt` | Instruction système du coach | Modifier et versionner le comportement sans le mélanger au transport HTTP |
+| `web/index.html`, `app.css` | Coquille et système visuel | Séparer structure et présentation, toujours embarquées dans le binaire |
+| `web/app.js` | Navigation, API et vues générales | Conserver un point d'assemblage léger sans framework frontend |
+| `web/collection.js`, `coach.js`, `preview.js` | Galerie, atelier de combos, aperçu partagé | Isoler les interactions métier pour éviter un document monolithique |
 
 ## Backend Axum et Tokio
 
@@ -65,7 +70,7 @@ Le parsing est synchrone et potentiellement long. L'exécuter dans `spawn_blocki
 
 Un snapshot contient la collection, les decks, les wildcards, les horodatages et les avertissements. Une nouvelle synchronisation remplace le snapshot en une seule écriture seulement après un parsing réussi. Ainsi, une erreur temporaire ne détruit pas les données déjà chargées.
 
-Magic Deck ne crée pas de base pour le parsing : les volumes courants tiennent facilement en mémoire. `Player.log` fournit les decks et les wildcards ; le processus MTGA fournit la collection courante. La base SQLite de cartes installée par MTGA est ouverte en lecture seule pour résoudre les identifiants Arena. Une petite base SQLite séparée conserve les rapports IA et leurs snapshots, afin de rendre l'historique reproductible.
+Magic Deck ne crée pas de base pour le parsing : les volumes courants tiennent facilement en mémoire. `Player.log` fournit les decks et les wildcards ; le processus MTGA fournit la collection courante. Après chaque synchronisation réussie, `collection_cache.rs` écrit un snapshot JSON atomique dans le dossier de données local. Au démarrage ou lorsque MTGA est fermé, ce snapshot est rechargé comme source de repli. La base SQLite de cartes installée par MTGA est ouverte en lecture seule pour résoudre les identifiants Arena. Une petite base SQLite séparée conserve les rapports IA et leurs snapshots, afin de rendre l'historique reproductible.
 
 ## Parser MTGA
 
@@ -85,13 +90,15 @@ Plusieurs représentations de listes de cartes sont acceptées : objet `{id: qua
 
 Le journal fournit souvent uniquement les identifiants numériques Arena. Le modèle conserve toujours ces identifiants exacts, puis `card_database.rs` recherche automatiquement le fichier `Raw_CardDatabase_*.mtga` de l'installation Steam. Il en lit en anglais les noms, couleurs, types, sets et numéros de collection, car le format d'import Arena utilise ces noms. La base est ouverte en lecture seule et le fichier le plus récent est choisi. Si elle est absente, l'interface retombe sur `Arena card #ID` sans inventer de correspondance.
 
+L'interface enrichit les cartes avec une miniature Scryfall chargée à la demande : URL de l'impression exacte (`set` + `collector number`) lorsque ces métadonnées existent, sinon recherche par nom exact. Les images sont `lazy`, masquées si le réseau ou la correspondance échoue, afin de préserver le fonctionnement local hors ligne. Les icônes de navigation restent inline/CSS et ne dépendent pas d'un téléchargement de police ou d'un asset propriétaire.
+
 Lors d'une analyse, `candidate_selector.rs` applique le format du deck avant le scoring. `Standard` et `Alchemy` utilisent une allowlist de codes d'extensions, remplaçable par `MAGIC_DECK_STANDARD_SETS` pour suivre les rotations. Les formats Eternal et Limited ne sont pas filtrés par bannissement, car la base SQLite MTGA ne fournit pas ces listes ; le serveur conserve néanmoins la validation stricte des quantités possédées.
 
 Les noms techniques de decks commençant par `?=?Loc/` sont résolus dans `Raw_ClientLocalization_*.mtga`. La langue est déduite des noms déjà localisés présents dans le journal, avec repli sur la locale du système puis sur l'anglais.
 
 ## Collection courante sous Linux
 
-Les clients MTGA actuels ne journalisent plus la réponse historique `GetPlayerCardsV3`. Ouvrir l'écran Collection ne peut donc pas rendre les quantités disponibles dans `Player.log`. Lorsque le journal ne contient aucun ancien snapshot, `memory_collection.rs` localise le processus Wine `MTGA.exe`, lit uniquement ses régions privées `rw-p` via `/proc/<pid>/mem`, puis cherche les structures `(identifiant Arena, quantité)` du runtime Mono. Un candidat n'est accepté que si au moins 90 % de ses identifiants existent dans la base SQLite locale, afin d'écarter les faux positifs.
+Les clients MTGA actuels ne journalisent plus la réponse historique `GetPlayerCardsV3`. Ouvrir l'écran Collection ne peut donc pas rendre les quantités disponibles dans `Player.log`. Lorsque le journal ne contient aucun ancien snapshot, `memory_collection.rs` détecte la plateforme : sous Linux, il localise le processus Wine `MTGA.exe` et lit uniquement ses régions privées `rw-p` via `/proc/<pid>/mem`; sous Windows, il utilise `OpenProcess`, `VirtualQueryEx` et `ReadProcessMemory` sur `MTGA.exe`. Dans les deux cas, il cherche les structures `(identifiant Arena, quantité)` du runtime Mono. Un candidat n'est accepté que si au moins 90 % de ses identifiants existent dans la base SQLite locale, afin d'écarter les faux positifs.
 
 Cette solution reste entièrement locale, ne modifie pas le processus et n'utilise ni identifiants ni API réseau MTGA. Elle exige que le jeu soit lancé par le même utilisateur et que la politique Linux autorise cette lecture. En cas d'échec, le snapshot reste valide pour les decks et expose un avertissement explicite.
 
@@ -103,7 +110,7 @@ Cette solution reste entièrement locale, ne modifie pas le processus et n'utili
 | `GET` | `/health` | Sonde de disponibilité |
 | `GET` | `/api/status` | État du fichier, statistiques et avertissements |
 | `POST` | `/api/sync` | Nouvelle lecture complète du journal |
-| `GET`, `PUT` | `/api/settings` | Lecture et modification du chemin du journal |
+| `GET`, `PUT` | `/api/settings` | Lecture et modification du chemin du journal et de la clé Gemini |
 | `GET` | `/api/decks` | Liste des decks |
 | `GET` | `/api/decks/{id}` | Détail d'un deck |
 | `GET` | `/api/decks/{id}/export?format=…` | Export Arena, JSON ou CSV |
@@ -117,7 +124,11 @@ Les erreurs attendues, comme un chemin invalide ou un deck absent, produisent un
 
 ## Interface web
 
-L'interface est un document HTML embarqué à la compilation avec `include_str!`. Ce choix permet de distribuer un seul binaire et supprime les problèmes de chemin vers des assets au lancement.
+L'interface et ses fichiers CSS/JS sont embarqués à la compilation avec `include_str!`. `/assets/{name}` ne sert qu'une liste explicite de fichiers connus, sans accès arbitraire au disque. Ce choix conserve le binaire unique tout en séparant les responsabilités. Les scripts classiques différés gardent quelques helpers partagés pour préserver les actions existantes ; ce n'est pas encore une architecture à composants isolés.
+
+La collection garde son état de filtres séparé du rendu des résultats : la saisie ne perd plus son focus à chaque caractère. La pagination limite le DOM à 36 cartes ; elle est locale (le snapshot complet est chargé). Les favoris sont un ensemble d'identifiants Arena dans `localStorage`, un choix léger pour une préférence visuelle propre au navigateur, distinct de l'inventaire possédé. Les options avancées sont repliées sur mobile pour laisser de la place aux illustrations.
+
+Un unique `<dialog>` natif affiche les cartes au clic, y compris dans les decks et rapports. Il fournit confinement et restauration du focus, fermeture par Échap et animation inverse sans dépendre de Motion. Les animations respectent `prefers-reduced-motion`. L'atelier distingue séquences jouables, résultat attendu et limites ; il ne transforme pas un conseil IA en preuve mécanique. Les boutons permettent de parcourir les étapes sans masquer les conditions nécessaires.
 
 Tailwind CSS est chargé par CDN conformément au choix d'un MVP sans build frontend. Le JavaScript natif utilise `fetch`, maintient un petit état côté navigateur et échappe les données avant insertion dans le DOM. Les vues Home, Decks, Collection et Settings restent utilisables sur mobile et bureau. Une connexion Internet est nécessaire au chargement de la page pour obtenir les styles Tailwind ; les API et les données restent locales.
 
@@ -145,9 +156,13 @@ Les réponses utilisent `Content-Disposition: attachment`, tandis que le bouton 
 
 Le handler copie le deck et la collection depuis le snapshot courant avant tout appel externe, puis libère le verrou partagé. `candidate_selector.rs` réduit localement la collection à 80 cartes pertinentes (couleurs, types, terrains et cartes déjà présentes). `ai_coach.rs` envoie le deck et cette liste courte à Gemini avec une instruction système restrictive, `responseMimeType: application/json` et un `responseJsonSchema`. La sortie est plafonnée à 4 096 tokens et trois suggestions, afin d'éviter un JSON coupé en plein champ. Le modèle stable par défaut est `gemini-3.6-flash`, configurable par `GEMINI_MODEL`.
 
-Le décodage Serde refuse les champs inattendus. Une seconde validation locale vérifie que chaque retrait existe dans le deck et que chaque ajout existe dans la collection sans dépasser la quantité possédée. Un rapport non conforme est rejeté et n'est pas enregistré.
+`coach_context.rs` lit la base Arena en lecture seule dans `spawn_blocking`. Les identifiants de capacités utilisent la première composante de `BaseAbilityId:variantId`, résolue via `Abilities` et `Localizations_enUS`. Mana et textes complets sont limités à 12 000 caractères, en privilégiant les cartes du deck ; les textes absents, inconnus ou dépassant le budget sont omis, jamais tronqués au milieu d'une règle. Si la base ou son schéma est indisponible, le contexte est vide et le prompt demande explicitement de ne pas inventer les capacités manquantes.
 
-Avant l'appel, une empreinte SHA-256 du deck, de la collection et du modèle est recherchée dans SQLite. Une correspondance renvoie immédiatement le rapport sans consommer de tokens ; un bouton de forçage pourra être ajouté ultérieurement. Après validation, `analysis_store.rs` écrit le rapport, sa date, le modèle et les représentations JSON exactes du deck et de la collection. La clé, fournie uniquement par `GEMINI_API_KEY`, n'est jamais persistée par l'application. Le fichier, protégé en mode `0600`, utilise WAL et un index `(deck_id, fingerprint, model)` pour un historique rapide sans conserver une connexion SQLite dans l'état asynchrone.
+Le décodage ignore les parties de réflexion, exige `finishReason=STOP` et refuse les champs inattendus. La validation locale vérifie retraits, appartenance des ajouts à la présélection et quantités finales dans la collection complète (toutes impressions confondues par nom). Les combos ont 2 à 4 cartes distinctes fournies dans le deck ou la présélection, réellement possédées, 2 à 5 étapes et des prérequis/limites non vides. Le plafond est de trois combos et trois changements indépendants. Un rapport non conforme est rejeté et n'est pas enregistré. Ces vérifications structurelles ne simulent pas les règles de Magic et ne prouvent donc aucune boucle infinie.
+
+Les nouveaux champs `combos` et `play_challenge` ont des valeurs par défaut Serde : aucun historique n'est supprimé et les anciens JSON restent lisibles. L'interface indique leur absence au lieu d'inventer des combos à partir d'un ancien rapport.
+
+Avant l'appel, une empreinte SHA-256 du deck, de la collection, du modèle, de `COACH_VERSION` et du prompt est recherchée dans SQLite. Une correspondance renvoie immédiatement le rapport sans consommer de tokens. Une nouvelle instruction ne recycle donc pas un ancien rapport sans combos. Les modifications du sélecteur ou du contrat doivent incrémenter `COACH_VERSION` ; le contenu externe de la base de règles n'est pas inclus dans cette empreinte. Après validation, `analysis_store.rs` écrit le rapport, sa date, le modèle et les représentations JSON exactes du deck et de la collection. La clé Gemini peut venir de `GEMINI_API_KEY` (prioritaire) ou des Settings ; dans ce dernier cas elle est stockée localement dans le fichier de configuration protégé en mode `0600` et n'est jamais renvoyée au navigateur. Le fichier de rapports utilise WAL et un index `(deck_id, fingerprint, model)` pour un historique rapide sans conserver une connexion SQLite dans l'état asynchrone.
 
 ## Validation et évolutions
 
@@ -156,6 +171,6 @@ Les tests unitaires couvrent les payloads préfixés, imbriqués et multilignes,
 Évolutions naturelles après le MVP :
 
 - surveillance incrémentale du journal ;
-- stockage SQLite pour l'historique ;
+- moteur de règles ou sources vérifiées pour certifier les interactions (hors périmètre du coach génératif) ;
 - pagination serveur pour de très grandes collections ;
 - copie locale de Tailwind ou CSS compilé pour un fonctionnement entièrement hors ligne.

@@ -11,7 +11,7 @@ pub struct Snapshot {
     pub warnings: Vec<String>,
 }
 
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OwnedCard {
     pub arena_id: u64,
@@ -21,6 +21,8 @@ pub struct OwnedCard {
     pub colors: Vec<String>,
     pub set_code: Option<String>,
     pub collector_number: Option<String>,
+    #[serde(default)]
+    pub rarity: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -48,6 +50,13 @@ pub struct Deck {
     pub card_count: u32,
     /// True for decks created or edited by the player, false for Arena-provided decks.
     pub is_user_deck: bool,
+    pub last_played: Option<String>,
+    pub last_updated: Option<String>,
+    pub is_favorite: bool,
+    pub wins: u32,
+    pub losses: u32,
+    pub draws: u32,
+    pub events: Vec<String>,
     #[serde(skip)]
     pub(crate) source_priority: u8,
 }
@@ -79,12 +88,23 @@ pub struct StatusResponse {
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
     pub log_path: String,
+    #[serde(default)]
+    #[serde(skip_serializing)]
+    pub gemini_api_key: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsView {
+    pub log_path: String,
+    pub gemini_configured: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateSettings {
     pub log_path: String,
+    pub gemini_api_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -94,6 +114,7 @@ pub(crate) struct CardMetadata {
     pub colors: Vec<String>,
     pub set_code: Option<String>,
     pub collector_number: Option<String>,
+    pub rarity: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -130,6 +151,32 @@ pub struct DeckAnalysisResponse {
     pub strengths: Vec<String>,
     pub weaknesses: Vec<String>,
     pub improvement_suggestions: Vec<ImprovementSuggestion>,
+    /// Defaults keep historical reports readable after the coaching upgrade.
+    #[serde(default)]
+    pub combos: Vec<DeckCombo>,
+    #[serde(default)]
+    pub play_challenge: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeckCombo {
+    pub title: String,
+    pub kind: ComboKind,
+    pub cards: Vec<CardChange>,
+    pub prerequisites: String,
+    pub steps: Vec<String>,
+    pub payoff: String,
+    pub limitations: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ComboKind {
+    Synergy,
+    Sequence,
+    RepeatableLoop,
+    InfiniteLoop,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -4,10 +4,18 @@ use anyhow::{Context, Result};
 
 use crate::model::Settings;
 
+#[cfg(unix)]
 pub fn default_log_path() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".local/share/Steam/steamapps/compatdata/2141910/pfx/drive_c/users/steamuser/AppData/LocalLow/Wizards Of The Coast/MTGA/Player.log")
+}
+
+#[cfg(windows)]
+pub fn default_log_path() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("AppData/LocalLow/Wizards Of The Coast/MTGA/Player.log")
 }
 
 pub fn config_path() -> PathBuf {
@@ -17,19 +25,20 @@ pub fn config_path() -> PathBuf {
 }
 
 pub fn load() -> Settings {
-    if let Ok(path) = std::env::var("MTGA_LOG_PATH") {
-        if !path.trim().is_empty() {
-            return Settings { log_path: path };
-        }
-    }
-
     let path = config_path();
-    std::fs::read_to_string(path)
+    let mut settings = std::fs::read_to_string(path)
         .ok()
         .and_then(|content| serde_json::from_str(&content).ok())
         .unwrap_or_else(|| Settings {
             log_path: default_log_path().to_string_lossy().into_owned(),
-        })
+            gemini_api_key: None,
+        });
+    if let Ok(log_path) = std::env::var("MTGA_LOG_PATH") {
+        if !log_path.trim().is_empty() {
+            settings.log_path = log_path;
+        }
+    }
+    settings
 }
 
 pub fn save(settings: &Settings) -> Result<()> {
@@ -41,6 +50,11 @@ pub fn save(settings: &Settings) -> Result<()> {
     let temporary = temporary_path(&path);
     std::fs::write(&temporary, serde_json::to_vec_pretty(settings)?)
         .with_context(|| format!("cannot write {}", temporary.display()))?;
+    #[cfg(unix)]
+    std::fs::set_permissions(
+        &temporary,
+        std::os::unix::fs::PermissionsExt::from_mode(0o600),
+    )?;
     std::fs::rename(&temporary, &path)
         .with_context(|| format!("cannot replace {}", path.display()))?;
     Ok(())
