@@ -25,7 +25,7 @@ pub struct OwnedCard {
     pub rarity: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeckCard {
     pub arena_id: u64,
@@ -37,7 +37,7 @@ pub struct DeckCard {
     pub collector_number: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Deck {
     pub id: String,
@@ -208,4 +208,38 @@ pub enum SuggestionPriority {
 #[serde(rename_all = "camelCase")]
 pub struct AnalyzeDeckRequest {
     pub deck_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DeckLabGenerateRequest {
+    pub deck_id: String,
+    #[serde(default)]
+    pub base_deck: Option<Deck>,
+    pub candidate_count: usize,
+    pub max_output_tokens: u32,
+    #[serde(default)]
+    pub simulation_feedback: Option<String>,
+    #[serde(default)]
+    pub cache_name: Option<String>,
+    #[serde(default)]
+    pub cache_attempted: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeckLabCandidate {
+    pub deck: Deck,
+    pub rationale: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeckLabGeneration {
+    pub candidates: Vec<DeckLabCandidate>,
+    pub max_output_tokens: u32,
+    pub model: String,
+    pub cache_name: Option<String>,
+    pub explicit_cache: bool,
+    pub cache_attempted: bool,
 }

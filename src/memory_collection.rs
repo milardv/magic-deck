@@ -1,8 +1,10 @@
 use std::{
     collections::{BTreeMap, HashSet},
-    fs,
     path::Path,
 };
+
+#[cfg(unix)]
+use std::fs;
 
 #[cfg(unix)]
 use std::{fs::File, os::unix::fs::FileExt};
@@ -26,7 +28,10 @@ use windows_sys::Win32::{
     },
 };
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
+
+#[cfg(unix)]
+use anyhow::Context;
 
 use crate::card_database;
 
@@ -254,6 +259,7 @@ fn find_mtga_pid() -> Result<Option<u32>> {
     Ok(found)
 }
 
+#[cfg(unix)]
 fn readable_private_region(line: &str) -> Option<(u64, u64)> {
     let mut fields = line.split_whitespace();
     let range = fields.next()?;

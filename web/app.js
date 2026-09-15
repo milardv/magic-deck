@@ -38,11 +38,17 @@ function showAlert(message, error = false) {
 }
 
 function showView(view) {
+  if (typeof simulation !== 'undefined') { clearTimeout(simulation.timer); clearTimeout(simulation.randomLabTimer); simulation.generation++; }
   state.currentView = view;
   document.querySelectorAll('[data-view]').forEach(element => element.classList.add('hidden'));
   document.getElementById(`view-${view}`).classList.remove('hidden');
   document.querySelectorAll('[data-nav]').forEach(button => button.classList.toggle('nav-active', button.dataset.nav === view));
+  document.querySelector('[data-shell-nav]')?.classList.toggle('simulation-open', view === 'simulation');
   if (view === 'collection') renderCollection();
+  if (view === 'simulation') {
+    if (typeof syncSimulationNavigation === 'function') syncSimulationNavigation();
+    renderSimulation();
+  }
   animateView(document.getElementById(`view-${view}`));
 }
 
@@ -166,6 +172,7 @@ function openDeck(id) {
   const encodedId = encodeURIComponent(deck.id);
   document.getElementById('view-deck-detail').innerHTML = `
     <button onclick="showView('decks')" class="mb-5 text-sm font-semibold text-slate-400 hover:text-white">Retour aux decks</button>
+    <button data-deck-id="${escapeHtml(deck.id)}" onclick="challengeDeck(this.dataset.deckId)" class="action-secondary mb-5 ml-4 px-4 py-2 text-sm">Tester contre les bots</button>
     <div class="mb-7 flex flex-col justify-between gap-4 sm:flex-row sm:items-end"><div>${heading(deck.format || 'Deck', deck.name, `${deck.cardCount} cards in the main deck.`)}</div>
       <div class="flex flex-wrap gap-2"><button id="analyze-deck-button" data-deck-id="${escapeHtml(deck.id)}" onclick="analyzeDeck(this.dataset.deckId)" class="action-secondary px-4 py-2 text-sm font-bold transition disabled:cursor-wait disabled:opacity-60">Explorer mes combos</button><button data-deck-id="${escapeHtml(deck.id)}" onclick="copyArena(this.dataset.deckId)" class="action-primary px-4 py-2 text-sm font-bold">Copier pour Arena</button>${['json','csv'].map(format => `<a href="/api/decks/${encodedId}/export?format=${format}" class="action-secondary px-4 py-2 text-sm font-semibold uppercase hover:border-gold/40">${format}</a>`).join('')}</div></div>
     <section class="mb-8 grid gap-3 sm:grid-cols-2 xl:grid-cols-5"><article class="rounded-xl border border-white/10 bg-panel/70 p-4"><p class="text-xs uppercase tracking-wider text-slate-500">Record</p><p class="mt-2 text-xl font-bold text-white">${deck.wins}–${deck.losses}${deck.draws ? `–${deck.draws}` : ''}</p><p class="text-xs text-slate-500">wins · losses${deck.draws ? ' · draws' : ''}</p></article><article class="rounded-xl border border-white/10 bg-panel/70 p-4"><p class="text-xs uppercase tracking-wider text-slate-500">Last played</p><p class="mt-2 text-sm font-semibold text-white">${escapeHtml(formatDeckDate(deck.lastPlayed))}</p></article><article class="rounded-xl border border-white/10 bg-panel/70 p-4"><p class="text-xs uppercase tracking-wider text-slate-500">Last updated</p><p class="mt-2 text-sm font-semibold text-white">${escapeHtml(formatDeckDate(deck.lastUpdated))}</p></article><article class="rounded-xl border border-white/10 bg-panel/70 p-4"><p class="text-xs uppercase tracking-wider text-slate-500">Status</p><p class="mt-2 text-sm font-semibold ${deck.isFavorite ? 'text-gold' : 'text-slate-300'}">${deck.isFavorite ? '★ Favorite' : 'Regular deck'}</p></article><article class="rounded-xl border border-white/10 bg-panel/70 p-4"><p class="text-xs uppercase tracking-wider text-slate-500">Queues</p><p class="mt-2 text-sm font-semibold text-white">${deck.events?.length ? escapeHtml(deck.events.join(', ')) : 'Non renseigné'}</p></article></section>

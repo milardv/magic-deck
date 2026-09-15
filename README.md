@@ -9,6 +9,7 @@ Le serveur Rust lit `Player.log`, conserve le dernier état en mémoire et persi
 - une collection illustrée : recherche, couleurs, types, raretés, tri et pagination ;
 - un mode galerie, des favoris et un aperçu agrandi au clic (fermeture par Échap ou clic autour) ;
 - des exports Arena, JSON et CSV ;
+- un laboratoire de simulations Forge en duel BO1 ;
 - la configuration du chemin du journal depuis l'interface.
 
 Le serveur écoute uniquement sur `127.0.0.1`. Lorsqu'une analyse IA est explicitement demandée, le deck, une présélection de 80 cartes possédées maximum et un contexte de règles borné sont envoyés à Google Gemini, pas l'inventaire complet. Les favoris restent dans le navigateur utilisé (`localStorage`) ; ils ne sont pas synchronisés entre navigateurs.
@@ -76,6 +77,28 @@ MAGIC_DECK_PORT=8092 ./target/release/magic-deck
 
 `PORT` est également accepté. La configuration enregistrée depuis l'interface se trouve dans `~/.config/magic-deck/config.json`.
 
+## Simuler des parties contre des bots
+
+L'onglet **Simulation** utilise [MTG Forge](https://github.com/Card-Forge/forge) comme moteur de règles et d'IA. C'est le meilleur compromis pour ce MVP : Forge connaît déjà les interactions de milliers de cartes et expose un mode headless, tandis que Magic Deck reste responsable de l'ergonomie, du protocole, des snapshots et de l'historique.
+
+Installez un JDK 17 ou supérieur puis préparez Forge 2.0.14 :
+
+```bash
+./scripts/install-forge.sh
+```
+
+Dans **Simulation → Configurer le moteur**, indiquez le dossier affiché par le script. Choisissez un de vos decks, puis une ou plusieurs références d'entraînement ou de vos autres decks, et 10, 100, 500 ou 1 000 parties par adversaire. Le service lance plusieurs workers Java en parallèle (selon le nombre de CPU, plafonné à 8), alterne les sièges, conserve la graine et met à jour la progression. Le rapport compare le taux de victoire avec une barre dédiée à chaque matchup. Une série peut être annulée et son journal Forge téléchargé. Pour ajuster les performances, utilisez `MAGIC_DECK_FORGE_WORKERS` (1 à 16) et `MAGIC_DECK_FORGE_XMX` (mémoire maximale par JVM, par défaut `2g`).
+
+Le moteur accepte actuellement les duels construits BO1 sans commandant ni réserve, avec 40 à 250 cartes principales. Les cartes dont le nom n'est pas résolu par Forge arrêtent la série. Le taux affiché porte sur les parties décisives ; égalités, délais et erreurs sont séparés. Il reflète les décisions des bots Forge, pas un taux de victoire attendu sur le ladder Arena.
+
+Chaque rapport contient les listes exactes de tous les adversaires, le moteur, la graine et les parties individuelles dans `~/.local/share/magic-deck/simulations/` (ou `MAGIC_DECK_SIM_DIR`).
+
+Le **Deck Lab Standard** part d'un deck existant et demande à Gemini jusqu'à trois variantes par itération. Le budget de sortie Gemini (2 048 à 65 536 tokens), le nombre d'itérations sans plafond imposé, le seuil de victoire, les adversaires, les parties par matchup et les workers Forge (1 à 4) sont configurables. Chaque proposition est vérifiée contre la collection locale avant simulation. Les workers sont des JVM isolées ; le meilleur candidat devient la base de l'itération suivante jusqu'au seuil ou à la limite choisie.
+
+Le **Générateur local** est un laboratoire sans Gemini : choisissez une ou deux couleurs, une répartition terrains/créatures/non-créatures, puis le nombre de variantes et les decks de référence. Magic Deck génère les listes depuis la collection (quatre exemplaires maximum par carte hors terrains de base), lance une partie Forge par référence et classe les variantes par score victoires/défaites/égalités. Les rapports détaillés restent accessibles dans le carnet de simulations.
+
+La shortlist stable de 80 cartes maximum est placée dans un cache de contexte Gemini explicite pendant 30 minutes lorsque sa taille atteint le minimum accepté par le modèle. Si Gemini refuse ce cache, Magic Deck conserve automatiquement un préfixe identique afin de bénéficier du cache implicite. Les itérations suivantes n'envoient comme contexte variable que le deck courant et les résultats Forge.
+
 Pour diagnostiquer un appel Gemini (prompt et réponse tronqués, sans la clé API), activer les logs détaillés :
 
 ```bash
@@ -98,7 +121,7 @@ Le prompt éditable est dans [`src/prompts/deck_coach.txt`](src/prompts/deck_coa
 Pour les decks `Standard` ou `Alchemy`, seules les extensions actuellement configurées comme légales sont proposées. La liste peut être ajustée après une rotation MTGA :
 
 ```bash
-MAGIC_DECK_STANDARD_SETS='WOE,LCI,MKM,OTJ,BIG,BLB,DSK,FDN,FIN,EOE,TLA,ECL,SOA,MSH,TMT,HOB' ./target/release/magic-deck
+MAGIC_DECK_STANDARD_SETS='WOE,LCI,MKM,OTJ,BIG,BLB,DSK,FDN,DFT,TDM,FIN,EOE,SPM,OM1,TLA,ECL,TMT,SOS,MSH,HOB' ./target/release/magic-deck
 ```
 
 Ce filtrage par extensions est une approximation, pas une garantie de légalité. La base locale MTGA ne contient pas les listes de bannissement par format ; les formats `Historic`, `Timeless`, `Explorer` et `Brawl` ne sont donc pas restreints par set.

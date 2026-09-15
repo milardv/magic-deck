@@ -71,41 +71,40 @@ pub fn select(deck: &Deck, collection: &[OwnedCard], limit: usize) -> Vec<OwnedC
         .collect()
 }
 
-fn legal_for_format(card: &OwnedCard, format: &str) -> bool {
+pub(crate) fn legal_for_format(card: &OwnedCard, format: &str) -> bool {
     let normalized = format
         .chars()
         .filter(|character| character.is_ascii_alphanumeric())
         .collect::<String>()
         .to_ascii_lowercase();
     if normalized.contains("standard") || normalized.contains("alchemy") {
-        let allowed = std::env::var("MAGIC_DECK_STANDARD_SETS")
-            .ok()
-            .map(|value| {
-                value
-                    .split(',')
-                    .map(|set| set.trim().to_ascii_uppercase())
-                    .filter(|set| !set.is_empty())
-                    .collect::<HashSet<_>>()
-            })
-            .unwrap_or_else(|| {
-                // Keep this list explicit and overridable: MTGA's SQLite
-                // database has no format-legality table.
-                [
-                    "WOE", "LCI", "MKM", "OTJ", "BIG", "BLB", "DSK", "FDN", "FIN", "EOE", "TLA",
-                    "ECL", "SOA", "MSH", "TMT", "HOB",
-                ]
-                .into_iter()
-                .map(str::to_owned)
-                .collect()
-            });
-        return card
-            .set_code
-            .as_deref()
-            .is_some_and(|set| allowed.contains(&set.to_ascii_uppercase()));
+        return card.set_code.as_deref().is_some_and(standard_set_is_legal);
     }
-    // Historic, Timeless, Explorer, Brawl and limited formats need card-level
-    // ban lists which are not shipped in the local MTGA card database.
     true
+}
+
+pub(crate) fn standard_set_is_legal(set_code: &str) -> bool {
+    let allowed = std::env::var("MAGIC_DECK_STANDARD_SETS")
+        .ok()
+        .map(|value| {
+            value
+                .split(',')
+                .map(|set| set.trim().to_ascii_uppercase())
+                .filter(|set| !set.is_empty())
+                .collect::<HashSet<_>>()
+        })
+        .unwrap_or_else(|| {
+            // Keep this list explicit and overridable: MTGA's SQLite
+            // database has no format-legality table.
+            [
+                "WOE", "LCI", "MKM", "OTJ", "BIG", "BLB", "DSK", "FDN", "DFT", "TDM", "FIN", "EOE",
+                "SPM", "OM1", "TLA", "ECL", "TMT", "SOS", "MSH", "HOB",
+            ]
+            .into_iter()
+            .map(str::to_owned)
+            .collect()
+        });
+    allowed.contains(&set_code.to_ascii_uppercase())
 }
 
 #[cfg(test)]
@@ -165,5 +164,11 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["Current Card"]
         );
+        assert!(standard_set_is_legal("DFT"));
+        assert!(standard_set_is_legal("TDM"));
+        assert!(standard_set_is_legal("SPM"));
+        assert!(standard_set_is_legal("OM1"));
+        assert!(standard_set_is_legal("SOS"));
+        assert!(!standard_set_is_legal("SOA"));
     }
 }

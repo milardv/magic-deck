@@ -45,6 +45,9 @@ Au démarrage, l'application charge la configuration et tente une première sync
 | `web/index.html`, `app.css` | Coquille et système visuel | Séparer structure et présentation, toujours embarquées dans le binaire |
 | `web/app.js` | Navigation, API et vues générales | Conserver un point d'assemblage léger sans framework frontend |
 | `web/collection.js`, `coach.js`, `preview.js` | Galerie, atelier de combos, aperçu partagé | Isoler les interactions métier pour éviter un document monolithique |
+| `simulation.rs` | Service Forge, campagnes multi-adversaires, snapshots, processus borné, statistiques et annulation | Isoler l'exécution Java et rendre les rapports reproductibles |
+| `simulation_routes.rs` | Configuration du moteur, lancement, progression, annulation et journaux | Garder les handlers HTTP minces et explicites |
+| `bridge/MagicDeckSimulation.java` | Adaptateur sans interface graphique vers Forge | Échanger des événements JSONL avec le JAR Forge |
 
 ## Backend Axum et Tokio
 
@@ -119,8 +122,27 @@ Cette solution reste entièrement locale, ne modifie pas le processus et n'utili
 | `POST` | `/api/analyze-deck` | Analyse Gemini d'un deck avec la collection courante |
 | `GET` | `/api/decks/{id}/analyses` | Historique daté des analyses du deck |
 | `GET` | `/api/analyses/{id}` | Consultation d'un rapport enregistré |
+| `GET`, `PUT` | `/api/simulation-engine` | État et configuration locale de Forge/Java |
+| `GET` | `/api/simulation-opponents` | Références d'entraînement intégrées |
+| `POST` | `/api/deck-lab/candidates` | Variantes Standard générées par Gemini et validées contre la collection |
+| `POST` | `/api/random-lab` | Génération locale de variantes mono/bicolores et lancement des matchups Forge, sans Gemini |
+| `GET` | `/api/random-lab/{id}` | Classement progressif des variantes et détails des rapports Forge |
+| `GET`, `POST` | `/api/simulations` | Historique et lancement d'une série |
+| `GET` | `/api/simulations/{id}` | Rapport et progression d'une série |
+| `POST` | `/api/simulations/{id}/cancel` | Annulation coopérative |
+| `GET` | `/api/simulations/{id}/logs` | Journal brut du moteur |
 
 Les erreurs attendues, comme un chemin invalide ou un deck absent, produisent un code HTTP adapté et `{ "error": "…" }`. Les erreurs internes sont journalisées côté serveur sans exposer leurs détails au navigateur.
+
+## Simulations Forge
+
+Forge reste un processus externe séparé : son JAR, ses ressources et sa licence ne sont pas copiés dans le binaire Magic Deck. Le script install-forge télécharge une version épinglée, vérifie sa somme SHA-256 et l'installe dans un dossier dédié. L'adaptateur Java rejette les cartes inconnues avant la première partie et produit un événement JSON par partie.
+
+Le serveur limite les jobs Forge concurrents selon `MAGIC_DECK_FORGE_WORKERS` (1 à 16), avec un défaut dérivé du nombre de CPU et plafonné à 8. Chaque JVM utilise le GC série pour réduire le coût des petites campagnes ; sa mémoire maximale est réglable via `MAGIC_DECK_FORGE_XMX` (défaut `2g`). Il écrit chaque rapport par renommage atomique dans un dossier numéroté, avec les listes DCK, la version de l'adaptateur et engine.log. Au redémarrage, les rapports en cours deviennent interrupted. Les résultats distinguent win, loss, draw et timeout ; un timeout ne devient pas une défaite. Le taux et son intervalle de Wilson ignorent les résultats non décisifs.
+
+Le protocole est explicite : duel construit BO1, 40–250 cartes principales, aucun commandant ni sideboard, sièges alternés et graine persistée. Les références sont des adversaires d'entraînement. Forge peut avoir une couverture de cartes ou une qualité d'IA inégale ; le rapport mesure un duel bot-versus-bot, pas une prédiction Arena.
+
+Le générateur local (`generate_random_decks`) reste indépendant de Gemini. Il agrège les impressions possédées par nom, filtre les cartes selon une ou deux couleurs, impose les quotas de terrains/créatures/non-créatures et respecte quatre exemplaires maximum hors terrains de base. Une campagne crée un rapport Forge par variante contre toutes les références ; une file asynchrone exploite la limite de workers configurée et `GET /api/random-lab/{id}` calcule le classement à partir des rapports enfants.
 
 ## Interface web
 

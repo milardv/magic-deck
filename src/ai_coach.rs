@@ -11,6 +11,8 @@ use crate::model::{Deck, DeckAnalysisResponse, DeckCard, OwnedCard};
 
 const DEFAULT_MODEL: &str = "gemini-3.6-flash";
 const API_ROOT: &str = "https://generativelanguage.googleapis.com/v1beta/models";
+const CACHE_ROOT: &str = "https://generativelanguage.googleapis.com/v1beta/cachedContents";
+const DECK_LAB_INSTRUCTION: &str = "Tu construis des decks MTG Arena Standard. Propose uniquement des échanges équilibrés qui conservent le nombre de cartes du deck fourni, avec un minimum de 60 cartes. Le total retiré doit égaler le total ajouté. Chaque ajout doit venir de candidateCards et respecter la quantité possédée. Réponds exclusivement avec le JSON demandé, sans résumé ni combo.";
 
 pub const SYSTEM_INSTRUCTION: &str = include_str!("prompts/deck_coach.txt");
 pub const COACH_VERSION: &str = "combos-v1";
@@ -47,6 +49,8 @@ struct CoachInput<'a> {
     deck_cards: Vec<CardEntry<'a>>,
     candidate_cards: Vec<CardEntry<'a>>,
     rules: std::collections::BTreeMap<u64, crate::coach_context::CardRules>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    simulation_feedback: Option<&'a str>,
 }
 
 #[derive(Debug, Serialize)]
@@ -87,6 +91,29 @@ struct Part {
     thought: bool,
 }
 
+#[derive(Debug, Deserialize)]
+struct DeckLabChanges {
+    improvement_suggestions: Vec<crate::model::ImprovementSuggestion>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CachedContentResponse {
+    name: String,
+}
+
+pub struct DeckLabSuggestionBatch {
+    pub suggestions: Vec<crate::model::ImprovementSuggestion>,
+    pub cache_name: Option<String>,
+}
+
+pub struct DeckLabSuggestionOptions<'a> {
+    pub candidate_count: usize,
+    pub max_output_tokens: u32,
+    pub simulation_feedback: Option<&'a str>,
+    pub cache_name: Option<&'a str>,
+    pub cache_attempted: bool,
+}
+
 impl GeminiClient {
     pub fn from_api_key(api_key: Option<String>) -> Result<Self, CoachError> {
         let api_key = api_key
@@ -119,6 +146,161 @@ impl GeminiClient {
         collection: &[OwnedCard],
         log_path: std::path::PathBuf,
     ) -> Result<DeckAnalysisResponse, CoachError> {
+        self.analyze_with_budget(deck, collection, log_path, 4096)
+            .await
+    }
+
+    pub async fn analyze_with_budget(
+        &self,
+        deck: &Deck,
+        collection: &[OwnedCard],
+        log_path: std::path::PathBuf,
+        max_output_tokens: u32,
+    ) -> Result<DeckAnalysisResponse, CoachError> {
+        self.analyze_internal(deck, collection, log_path, max_output_tokens, None)
+            .await
+    }
+
+    pub async fn suggest_deck_changes(
+        &self,
+        deck: &Deck,
+        shortlist_deck: &Deck,
+        collection: &[OwnedCard],
+        options: DeckLabSuggestionOptions<'_>,
+    ) -> Result<DeckLabSuggestionBatch, CoachError> {
+        let DeckLabSuggestionOptions {
+            candidate_count,
+            max_output_tokens,
+            simulation_feedback,
+            cache_name: existing_cache,
+            cache_attempted,
+        } = options;
+        let candidates = candidate_selector::select(shortlist_deck, collection, 80);
+        let stable_input = CoachInput {
+            deck_name: &shortlist_deck.name,
+            format: &shortlist_deck.format,
+            deck_cards: Vec::new(),
+            candidate_cards: candidates
+                .iter()
+                .map(|card| CardEntry {
+                    arena_id: card.arena_id,
+                    name: &card.name,
+                    quantity: card.quantity,
+                    set_code: &card.set_code,
+                    collector_number: &card.collector_number,
+                    section: "collection",
+                    type_line: &card.type_line,
+                })
+                .collect(),
+            rules: Default::default(),
+            simulation_feedback: None,
+        };
+        let stable_prompt = serde_json::to_string(&stable_input)?;
+        let dynamic_prompt = serde_json::to_string(&json!({
+            "deckName": deck.name,
+            "format": deck.format,
+            "deckCards": deck_entries(deck),
+            "simulationFeedback": simulation_feedback
+        }))?;
+        let mut cache_name = existing_cache.map(str::to_owned);
+        if cache_name.is_none() && !cache_attempted {
+            let cache_payload = json!({
+                "model": format!("models/{}", self.model),
+                "displayName": "magic-deck-standard-shortlist",
+                "systemInstruction": {"parts":[{"text":DECK_LAB_INSTRUCTION}]},
+                "contents":[{"role":"user","parts":[{"text":stable_prompt}]}],
+                "ttl":"1800s"
+            });
+            let response = self
+                .http
+                .post(CACHE_ROOT)
+                .header("x-goog-api-key", &self.api_key)
+                .json(&cache_payload)
+                .send()
+                .await?;
+            if response.status().is_success() {
+                cache_name = Some(response.json::<CachedContentResponse>().await?.name);
+                info!(cache=?cache_name, "Gemini Deck Lab explicit context cache created");
+            } else {
+                debug!(status=%response.status(), "Explicit cache unavailable; using stable implicit-cache prefix");
+            }
+        }
+        let mut payload = json!({
+            "contents": [{"role":"user","parts":[{"text":dynamic_prompt}]}],
+            "generationConfig": {
+                "temperature": 0.45,
+                "maxOutputTokens": max_output_tokens.clamp(2048, 65_536),
+                "responseMimeType":"application/json",
+                "responseJsonSchema": deck_lab_schema(candidate_count)
+            }
+        });
+        if let Some(name) = &cache_name {
+            payload["cachedContent"] = Value::String(name.clone());
+        } else {
+            payload["systemInstruction"] = json!({"parts":[{"text":DECK_LAB_INSTRUCTION}]});
+            payload["contents"] =
+                json!([{"role":"user","parts":[{"text":stable_prompt},{"text":dynamic_prompt}]}]);
+        }
+        info!(model=%self.model, deck=%deck.name, candidate_cards=candidates.len(), max_output_tokens, "Preparing compact Gemini Deck Lab request");
+        debug!(dynamic_prompt=%dynamic_prompt, cache=?cache_name, "Gemini Deck Lab dynamic prompt (API key excluded)");
+        let response = self
+            .http
+            .post(format!("{API_ROOT}/{}:generateContent", self.model))
+            .header("x-goog-api-key", &self.api_key)
+            .json(&payload)
+            .send()
+            .await?;
+        let status = response.status();
+        let body = response.text().await?;
+        if !status.is_success() {
+            return Err(CoachError::Api {
+                status,
+                message: truncate_for_log(&body, 500),
+            });
+        }
+        let envelope: GenerateResponse = serde_json::from_str(&body)?;
+        let candidate = envelope
+            .candidates
+            .into_iter()
+            .next()
+            .ok_or(CoachError::EmptyResponse)?;
+        if candidate.finish_reason.as_deref() != Some("STOP") {
+            warn!(finish_reason=?candidate.finish_reason, response_bytes=body.len(), "Compact Deck Lab response incomplete");
+            return Err(CoachError::InvalidSuggestion("La proposition Deck Lab a été interrompue. Augmentez le budget Gemini ou réduisez le nombre de candidats.".into()));
+        }
+        let text = candidate
+            .content
+            .into_iter()
+            .flat_map(|content| content.parts)
+            .filter(|part| !part.thought)
+            .filter_map(|part| part.text)
+            .collect::<String>();
+        let changes: DeckLabChanges = serde_json::from_str(&text)?;
+        let analysis = DeckAnalysisResponse {
+            deck_summary: String::new(),
+            game_plan: String::new(),
+            strengths: vec![],
+            weaknesses: vec![],
+            improvement_suggestions: changes.improvement_suggestions.clone(),
+            combos: vec![],
+            play_challenge: String::new(),
+        };
+        validate_shortlist(&analysis, deck, &candidates)?;
+        validate_analysis(&analysis, deck, collection)?;
+        Ok(DeckLabSuggestionBatch {
+            suggestions: changes.improvement_suggestions,
+            cache_name,
+        })
+    }
+
+    async fn analyze_internal(
+        &self,
+        deck: &Deck,
+        collection: &[OwnedCard],
+        log_path: std::path::PathBuf,
+        max_output_tokens: u32,
+        simulation_feedback: Option<&str>,
+    ) -> Result<DeckAnalysisResponse, CoachError> {
         let candidates = candidate_selector::select(deck, collection, 80);
         let ids = deck_entries(deck)
             .iter()
@@ -137,6 +319,7 @@ impl GeminiClient {
             };
         let input = CoachInput {
             rules,
+            simulation_feedback,
             deck_name: &deck.name,
             format: &deck.format,
             deck_cards: deck_entries(deck),
@@ -164,7 +347,7 @@ impl GeminiClient {
                 "temperature": 0.3,
                 // Keep enough headroom for the required JSON object. Gemini may
                 // otherwise stop in the middle of a string (MAX_TOKENS).
-                "maxOutputTokens": 4096,
+                "maxOutputTokens": max_output_tokens.clamp(2048, 4096),
                 "responseMimeType": "application/json",
                 "responseJsonSchema": response_schema()
             }
@@ -482,6 +665,11 @@ fn response_schema() -> Value {
         },
         "required": ["deck_summary", "game_plan", "strengths", "weaknesses", "improvement_suggestions", "combos", "play_challenge"]
     })
+}
+
+fn deck_lab_schema(candidate_count: usize) -> Value {
+    let card = json!({"type":"object","additionalProperties":false,"properties":{"card_name":{"type":"string"},"quantity":{"type":"integer","minimum":1}},"required":["card_name","quantity"]});
+    json!({"type":"object","additionalProperties":false,"properties":{"improvement_suggestions":{"type":"array","minItems":1,"maxItems":candidate_count.clamp(1,3),"items":{"type":"object","additionalProperties":false,"properties":{"title":{"type":"string"},"priority":{"type":"string","enum":["high","medium","low"]},"card_to_remove":{"type":"array","items":card.clone()},"card_to_add":{"type":"array","items":card},"reasoning":{"type":"string"}},"required":["title","priority","card_to_remove","card_to_add","reasoning"]}}},"required":["improvement_suggestions"]})
 }
 
 #[cfg(test)]

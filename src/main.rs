@@ -10,6 +10,8 @@ mod memory_collection;
 mod model;
 mod parser;
 mod routes;
+mod simulation;
+mod simulation_routes;
 
 use std::net::SocketAddr;
 
@@ -57,9 +59,39 @@ async fn main() -> Result<()> {
         .route("/api/analyze-deck", post(routes::analyze_deck))
         .route("/api/collection", get(routes::collection))
         .route("/api/collection/export", get(routes::export_collection))
+        .route(
+            "/api/simulation-engine",
+            get(simulation_routes::engine).put(simulation_routes::configure),
+        )
+        .route(
+            "/api/simulations",
+            get(simulation_routes::list).post(simulation_routes::start),
+        )
+        .route(
+            "/api/simulation-opponents",
+            get(simulation_routes::opponents),
+        )
+        .route(
+            "/api/deck-lab/candidates",
+            post(simulation_routes::generate_candidates),
+        )
+        .route(
+            "/api/random-lab",
+            get(simulation_routes::random_lab_list).post(simulation_routes::random_lab_start),
+        )
+        .route(
+            "/api/random-lab/{id}",
+            get(simulation_routes::random_lab_get),
+        )
+        .route("/api/simulations/{id}", get(simulation_routes::get))
+        .route(
+            "/api/simulations/{id}/cancel",
+            post(simulation_routes::cancel),
+        )
+        .route("/api/simulations/{id}/logs", get(simulation_routes::logs))
         .layer(CompressionLayer::new())
         .layer(TraceLayer::new_for_http())
-        .with_state(state);
+        .with_state(state.clone());
 
     let port = std::env::var("MAGIC_DECK_PORT")
         .or_else(|_| std::env::var("PORT"))
@@ -72,7 +104,10 @@ async fn main() -> Result<()> {
         .with_context(|| format!("cannot listen on http://{address}"))?;
     tracing::info!("Magic Deck available at http://{address}");
     axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(async move {
+            shutdown_signal().await;
+            state.simulations.shutdown().await;
+        })
         .await?;
     Ok(())
 }

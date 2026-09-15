@@ -29,6 +29,8 @@ pub struct AppState {
     pub settings: Arc<RwLock<Settings>>,
     pub snapshot: Arc<RwLock<Snapshot>>,
     pub analysis_store: AnalysisStore,
+    pub simulations: crate::simulation::SimulationService,
+    pub random_labs: crate::simulation::RandomLabStore,
 }
 
 impl AppState {
@@ -37,6 +39,8 @@ impl AppState {
             settings: Arc::new(RwLock::new(settings)),
             snapshot: Arc::new(RwLock::new(Snapshot::default())),
             analysis_store: AnalysisStore::open_default()?,
+            simulations: crate::simulation::SimulationService::open_default()?,
+            random_labs: crate::simulation::RandomLabStore::default(),
         })
     }
 }
@@ -61,6 +65,14 @@ pub async fn index() -> Html<&'static str> {
 
 pub async fn web_asset(Path(name): Path<String>) -> Response {
     let (mime, body) = match name.as_str() {
+        "simulation.js" => (
+            "text/javascript; charset=utf-8",
+            include_str!("../web/simulation.js"),
+        ),
+        "simulation.css" => (
+            "text/css; charset=utf-8",
+            include_str!("../web/simulation.css"),
+        ),
         "app.css" => ("text/css; charset=utf-8", include_str!("../web/app.css")),
         "app.js" => (
             "text/javascript; charset=utf-8",
@@ -145,7 +157,7 @@ pub async fn update_settings(
     }))
 }
 
-fn effective_api_key(settings: &Settings) -> Option<String> {
+pub(crate) fn effective_api_key(settings: &Settings) -> Option<String> {
     std::env::var("GEMINI_API_KEY")
         .ok()
         .filter(|key| !key.trim().is_empty())
@@ -498,14 +510,14 @@ pub struct ApiError {
 }
 
 impl ApiError {
-    fn bad_request(message: impl Into<String>) -> Self {
+    pub(crate) fn bad_request(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::BAD_REQUEST,
             message: message.into(),
         }
     }
 
-    fn not_found(message: impl Into<String>) -> Self {
+    pub(crate) fn not_found(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::NOT_FOUND,
             message: message.into(),
@@ -526,14 +538,14 @@ impl ApiError {
         }
     }
 
-    fn bad_gateway(message: impl Into<String>) -> Self {
+    pub(crate) fn bad_gateway(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::BAD_GATEWAY,
             message: message.into(),
         }
     }
 
-    fn internal(error: impl std::fmt::Display) -> Self {
+    pub(crate) fn internal(error: impl std::fmt::Display) -> Self {
         tracing::error!(error = %error, "request failed");
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,

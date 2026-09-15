@@ -117,6 +117,42 @@ pub fn load_known_card_ids(log_path: &Path) -> Result<Option<HashSet<u32>>> {
     Ok(Some(ids))
 }
 
+pub fn load_printing_sets(
+    log_path: &Path,
+    names: &HashSet<String>,
+) -> Result<Option<HashMap<String, HashSet<String>>>> {
+    let Some(database_path) = find_database(log_path) else {
+        return Ok(None);
+    };
+    let connection = Connection::open_with_flags(
+        database_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    let mut result = HashMap::<String, HashSet<String>>::new();
+    let values = names
+        .iter()
+        .map(|name| name.to_lowercase())
+        .collect::<Vec<_>>();
+    for chunk in values.chunks(400) {
+        let placeholders = std::iter::repeat_n("?", chunk.len())
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!("SELECT lower(l.Loc), c.ExpansionCode FROM Cards c JOIN Localizations_enUS l ON l.LocId = c.TitleId AND l.Formatted = 1 WHERE lower(l.Loc) IN ({placeholders})");
+        let mut statement = connection.prepare(&sql)?;
+        let rows = statement.query_map(params_from_iter(chunk.iter()), |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        for row in rows {
+            let (name, set) = row?;
+            result
+                .entry(name)
+                .or_default()
+                .insert(set.to_ascii_uppercase());
+        }
+    }
+    Ok(Some(result))
+}
+
 pub fn load_deck_names(
     log_path: &Path,
     decks: &BTreeMap<String, Deck>,

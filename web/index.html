@@ -16,6 +16,7 @@
     tailwind.config = { darkMode: 'class', theme: { extend: { colors: { ink: '#0b0d10', panel: '#15191e', gold: '#d9ae61', rust: '#b9543d', chalk: '#f2eee5' } } } };
   </script>
   <link rel="stylesheet" href="/assets/app.css">
+  <link rel="stylesheet" href="/assets/simulation.css">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/mana-font@1.18.0/css/mana.min.css">
 </head>
 <body class="min-h-screen text-slate-200 antialiased">
@@ -32,6 +33,14 @@
         <button data-nav="home" onclick="showView('home')" class="nav-active w-full rounded-sm border border-transparent px-3 py-2 text-left text-sm font-medium">Accueil</button>
         <button data-nav="decks" onclick="showView('decks')" class="w-full rounded-sm border border-transparent px-3 py-2 text-left text-sm font-medium text-slate-400 hover:text-white">Mes decks</button>
         <button data-nav="collection" onclick="showView('collection')" class="w-full rounded-sm border border-transparent px-3 py-2 text-left text-sm font-medium text-slate-400 hover:text-white">Collection</button>
+        <button data-nav="simulation" onclick="showView('simulation')" class="w-full rounded-sm border border-transparent px-3 py-2 text-left text-sm font-medium text-slate-400 hover:text-white">Simulation</button>
+        <div id="simulation-subnav" class="simulation-subnav" aria-label="Outils de simulation">
+          <button type="button" data-simulation-nav="duel" onclick="showSimulationSection('duel')">Duel rapide</button>
+          <button type="button" data-simulation-nav="lab" onclick="showSimulationSection('lab')">Deck Lab IA</button>
+          <button type="button" data-simulation-nav="random" onclick="showSimulationSection('random')">Générateur local</button>
+          <button type="button" data-simulation-nav="reports" onclick="showSimulationSection('reports')">Rapports</button>
+          <button type="button" data-simulation-nav="engine" onclick="showSimulationSection('engine')">Moteur Forge</button>
+        </div>
         <button data-nav="settings" onclick="showView('settings')" class="w-full rounded-sm border border-transparent px-3 py-2 text-left text-sm font-medium text-slate-400 hover:text-white">Réglages</button>
       </nav>
       <div class="mt-8 hidden lg:block">
@@ -48,6 +57,7 @@
         <section id="view-deck-detail" data-view class="hidden"></section>
         <section id="view-collection" data-view class="hidden"></section>
         <section id="view-settings" data-view class="hidden"></section>
+        <section id="view-simulation" data-view class="hidden"></section>
       </div>
     </main>
   </div>
@@ -62,6 +72,7 @@
   <script src="/assets/collection.js" defer></script>
   <script src="/assets/coach.js" defer></script>
   <script src="/assets/preview.js" defer></script>
+  <script src="/assets/simulation.js" defer></script>
 
 </body>
 </html>
